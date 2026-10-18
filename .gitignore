@@ -1,0 +1,44 @@
+# ---- Node / Vite frontend ----
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-error.log*
+
+# Dev-server stdout/stderr captures kept at repo root
+frontend-dev.out.log
+frontend-dev.err.log
+backend-dev.out.log
+backend-dev.err.log
+*.log
+
+# ---- Python / FastAPI backend ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ---- Secrets: never commit real credentials ----
+# backend/.env holds DATABASE_URL, SECRET_KEY and Cloudinary keys.
+.env
+.env.*
+!.env.example
+
+# ---- Docker ----
+# Postgres data lives in the named volume `postgres_data`, nothing local to ignore.
+docker-compose.override.yml
+
+# ---- Editors / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+AUDIT_REPORT.md
+WhatsApp*
