@@ -58,6 +58,28 @@ def create_need(
 
     now = datetime.utcnow()
 
+    duplicate = db.scalar(
+        select(Need)
+        .where(
+            Need.user_id == current_user.id,
+            Need.title == data.title.strip(),
+            Need.need_type == data.need_type,
+            Need.budget == data.budget,
+            Need.location == data.location.strip(),
+            Need.description == data.description.strip(),
+            Need.created_at
+            > now
+            - timedelta(
+                seconds=settings.duplicate_submission_window_seconds
+            ),
+        )
+        .order_by(Need.created_at.desc())
+        .limit(1)
+    )
+
+    if duplicate is not None:
+        return duplicate
+
     need = Need(
         user_id=current_user.id,
         title=data.title.strip(),

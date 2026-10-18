@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     max_images_per_listing: int = 5
     max_image_size_mb: int = 5
 
+    duplicate_submission_window_seconds: int = 60
+
     cors_origins: str = "http://localhost:4200"
     allowed_email_domains: str = "gmail.com"
 

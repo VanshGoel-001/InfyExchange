@@ -153,6 +153,28 @@ async def create_listing(
             detail="Sell listings must have a price",
         )
 
+    duplicate = db.scalar(
+        select(Listing)
+        .where(
+            Listing.owner_id == current_user.id,
+            Listing.title == title.strip(),
+            Listing.listing_type == listing_type,
+            Listing.price == price,
+            Listing.location == location.strip(),
+            Listing.description == description.strip(),
+            Listing.created_at
+            > datetime.utcnow()
+            - timedelta(
+                seconds=settings.duplicate_submission_window_seconds
+            ),
+        )
+        .order_by(Listing.created_at.desc())
+        .limit(1)
+    )
+
+    if duplicate is not None:
+        return get_listing_detail(duplicate.id, db)
+
     now = datetime.utcnow()
 
     listing = Listing(
