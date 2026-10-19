@@ -16,6 +16,7 @@ from app.models import (
     User,
 )
 from app.routers import (
+    admin,
     auth,
     interests,
     listings,
@@ -23,14 +24,13 @@ from app.routers import (
     users,
 )
 from app.services.cleanup import cleanup_loop
+from app.services.migration import apply_migrations
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    Base.metadata.create_all(
-        bind=engine
-    )
+    apply_migrations()
 
     cleanup_task = asyncio.create_task(
         cleanup_loop()
@@ -46,10 +46,15 @@ async def lifespan(app: FastAPI):
         pass
 
 
+is_production = settings.environment.lower() == "production"
+
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
 )
 
 def custom_openapi():
@@ -111,7 +116,42 @@ app.include_router(users.router)
 app.include_router(listings.router)
 app.include_router(interests.router)
 app.include_router(needs.router)
+app.include_router(admin.router)
 
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+import logging
+
+logger = logging.getLogger(__name__)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    errors = []
+    for err in exc.errors():
+        field = " -> ".join([str(loc) for loc in err.get("loc", []) if loc != "body"])
+        errors.append(f"{field}: {err.get('msg')}" if field else err.get("msg", "Invalid input"))
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors if len(errors) > 1 else (errors[0] if errors else "Validation failed")},
+    )
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request, exc: SQLAlchemyError):
+    logger.error(f"Database error during request {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "A database error occurred. Internal database details are masked for security."},
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc: Exception):
+    logger.error(f"Unhandled exception during request {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred."},
+    )
 
 @app.get("/")
 def root():

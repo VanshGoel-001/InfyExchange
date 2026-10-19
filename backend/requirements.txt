@@ -15,4 +15,6 @@ pwdlib[argon2]
 
 cloudinary
 
+alembic
+
 python-dotenv

@@ -1,3 +1,338 @@
-import {useEffect,useRef,useState} from 'react'; import {useNavigate} from 'react-router-dom'; import {Header} from '../components/Layout'; import {Banner,TipBox} from '../components/Ui'; import {api} from '../services/api'; import {useAuth} from '../context/AuthContext';
-const categories=['BADMINTON','TABLE_TENNIS','POOL_SNOOKER','SQUASH','TENNIS','CRICKET','FOOTBALL','BASKETBALL','OTHER'];
-export default function PostingPage({need=false}){const nav=useNavigate(),{token}=useAuth(),title=need?'Post a Need':'Post a Listing';const [form,setForm]=useState({title:'',category:'BADMINTON',listing_type:'SELL',need_type:'BUY',price:'',price_unit:'day',condition:'GOOD',duration:'',budget:'',location:'ECC',description:'',images:[]}),[error,setError]=useState(''),[submitting,setSubmitting]=useState(false),submitLock=useRef(false),abortRef=useRef(null); const set=(key,value)=>setForm(f=>({...f,[key]:value}));useEffect(()=>()=>abortRef.current?.abort(),[]);useEffect(()=>{const warn=e=>{if(submitLock.current){e.preventDefault();e.returnValue=''}};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn)},[]);const paid=['SELL','RENT'].includes(form.listing_type),isRent=form.listing_type==='RENT'; const submit=async e=>{e.preventDefault();if(submitLock.current)return;submitLock.current=true;abortRef.current=new AbortController();setSubmitting(true);setError('');try{if(!/^[\p{L}\p{N}][\p{L}\p{N}\s.,()'&-]{1,149}$/u.test(form.title.trim()))throw new Error('Item name must be 2–150 valid characters.');if(!/^[\p{L}\p{N}\s,.'()&/-]{2,100}$/u.test(form.location.trim()))throw new Error('Enter a valid location.');if(form.description.trim().length<2)throw new Error('Description must be at least 2 characters.');if(!need&&paid&&(!Number.isFinite(Number(form.price))||Number(form.price)<=0))throw new Error('Enter a price greater than zero.');if(!need&&form.images.length>5)throw new Error('You can upload a maximum of 5 images.');if(need)await api.createNeed({title:form.title,category:form.category,need_type:form.need_type,duration:form.duration||null,budget:Number(form.budget||0),location:form.location,description:form.description},token,abortRef.current.signal);else {let body=new FormData();for(const [key,value] of Object.entries(form)){if(key==='images')value.forEach(file=>body.append('images',file));else if(!['need_type','duration','budget','price_unit'].includes(key))body.append(key, key==='price' ? String(value||0) : value)}if(isRent)body.append('price_unit',form.price_unit);await api.createListing(body,token,abortRef.current.signal)}nav(need?'/needs':'/listings')}catch(e){if(e.name==='AbortError')return;setError(e.message)}finally{submitLock.current=false;abortRef.current=null;setSubmitting(false)}}; return <><Header/><main className="wide"><Banner title={title} subtitle={need?'Tell the community what you need. Someone might have it!':'Share something you want to sell, rent, lend or give away with fellow Infosys Mysore trainees.'} kind={need?'need':'sports'}/><div className="post-layout"><form className="form-card" onSubmit={submit} noValidate><h2>{need?'▤　 Need Details':'Item Details'}</h2><label className="form-field">Item Name *<input required minLength="2" maxLength="150" value={form.title} onChange={e=>set('title',e.target.value)} placeholder="e.g. Yonex Badminton Racket"/></label><div className="two"><label className="form-field">Category *<select value={form.category} onChange={e=>set('category',e.target.value)}>{categories.map(c=><option key={c}>{c}</option>)}</select></label><label className="form-field">{need?'Looking for *':'Type *'}<select value={need?form.need_type:form.listing_type} onChange={e=>set(need?'need_type':'listing_type',e.target.value)}>{(need?['BUY','RENT','BORROW']:['SELL','RENT','LEND','GIVEAWAY']).map(t=><option key={t}>{t}</option>)}</select></label></div><div className="two"><label className="form-field">{need?'Duration':'Price (₹)'}<input type={need?'text':'number'} min="1" disabled={!need&&!paid} value={need?form.duration:form.price} onChange={e=>set(need?'duration':'price',e.target.value)} required={!need&&paid}/></label><label className="form-field">{need?'Budget (₹)':isRent?'Duration':'Condition'}{need?<input type="number" min="0" value={form.budget} onChange={e=>set('budget',e.target.value)}/>:isRent?<select value={form.price_unit} onChange={e=>set('price_unit',e.target.value)}>{['day','week','month','hour'].map(x=><option key={x}>{x}</option>)}</select>:<select value={form.condition} onChange={e=>set('condition',e.target.value)}>{['NEW','LIKE_NEW','GOOD','FAIR','POOR'].map(c=><option key={c}>{c}</option>)}</select>}</label></div>{!need&&isRent&&<label className="form-field">Condition<select value={form.condition} onChange={e=>set('condition',e.target.value)}>{['NEW','LIKE_NEW','GOOD','FAIR','POOR'].map(c=><option key={c}>{c}</option>)}</select></label>}<label className="form-field">Location *<input required minLength="2" maxLength="100" value={form.location} onChange={e=>set('location',e.target.value)}/></label><label className="form-field">Description *<textarea required minLength="2" maxLength="2000" value={form.description} onChange={e=>set('description',e.target.value)}/></label>{!need&&<label className="form-field">Photos<input type="file" multiple accept="image/jpeg,image/png,image/webp" onChange={e=>set('images',Array.from(e.target.files))}/></label>}{error&&<p role="alert" className="error">{error}</p>}<button className="primary submit" disabled={submitting} aria-busy={submitting}>{submitting?'⌁　 Posting…':`⌁　 ${need?'Post Need':'Post Listing'}`}</button></form><aside><TipBox listing={!need}/></aside></div></main></>}
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Header } from '../components/Layout';
+import { Banner, TipBox } from '../components/Ui';
+import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+
+const CATEGORIES = [
+  'BADMINTON',
+  'TABLE_TENNIS',
+  'POOL_SNOOKER',
+  'SQUASH',
+  'TENNIS',
+  'CRICKET',
+  'FOOTBALL',
+  'BASKETBALL',
+  'OTHER',
+];
+
+const ITEM_CONDITIONS = ['NEW', 'LIKE_NEW', 'GOOD', 'FAIR', 'POOR'];
+const LISTING_TYPES = ['SELL', 'RENT', 'LEND', 'GIVEAWAY'];
+const NEED_TYPES = ['BUY', 'RENT', 'BORROW'];
+const RENT_UNITS = ['day', 'week', 'month', 'hour'];
+
+export default function PostingPage({ need = false }) {
+  const navigate = useNavigate();
+  const { token } = useAuth();
+  const title = need ? 'Post a Need' : 'Post a Listing';
+
+  const [form, setForm] = useState({
+    title: '',
+    category: 'BADMINTON',
+    listing_type: 'SELL',
+    need_type: 'BUY',
+    price: '',
+    price_unit: 'day',
+    condition: 'GOOD',
+    duration: '',
+    budget: '',
+    location: 'ECC',
+    description: '',
+    images: [],
+  });
+
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submitLock = useRef(false);
+  const abortRef = useRef(null);
+
+  const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (submitLock.current) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  const isPaid = ['SELL', 'RENT'].includes(form.listing_type);
+  const isRent = form.listing_type === 'RENT';
+
+  const validateForm = () => {
+    const trimmedTitle = form.title.trim();
+    if (trimmedTitle.length < 2 || trimmedTitle.length > 150) {
+      throw new Error('Title must be between 2 and 150 characters.');
+    }
+
+    const trimmedLocation = form.location.trim();
+    if (trimmedLocation.length < 2 || trimmedLocation.length > 100) {
+      throw new Error('Location must be between 2 and 100 characters.');
+    }
+
+    const trimmedDesc = form.description.trim();
+    if (trimmedDesc.length < 2 || trimmedDesc.length > 2000) {
+      throw new Error('Description must be between 2 and 2000 characters.');
+    }
+
+    if (!need) {
+      if (isPaid) {
+        const numPrice = Number(form.price);
+        if (!Number.isFinite(numPrice) || numPrice <= 0) {
+          throw new Error('Please enter a valid price greater than zero.');
+        }
+      }
+      if (form.images.length > 5) {
+        throw new Error('You can upload a maximum of 5 images.');
+      }
+      for (const file of form.images) {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+          throw new Error(`File "${file.name}" is not a valid format. Only JPEG, PNG, and WebP are supported.`);
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          throw new Error(`File "${file.name}" exceeds the 5MB size limit.`);
+        }
+      }
+    } else {
+      if (form.budget && Number(form.budget) < 0) {
+        throw new Error('Budget cannot be negative.');
+      }
+    }
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (submitLock.current) return;
+    submitLock.current = true;
+    abortRef.current = new AbortController();
+    setSubmitting(true);
+    setError('');
+
+    try {
+      validateForm();
+
+      if (need) {
+        await api.createNeed(
+          {
+            title: form.title.trim(),
+            category: form.category,
+            need_type: form.need_type,
+            duration: form.duration.trim() || null,
+            budget: Number(form.budget || 0),
+            location: form.location.trim(),
+            description: form.description.trim(),
+          },
+          token,
+          abortRef.current.signal
+        );
+      } else {
+        const formData = new FormData();
+        formData.append('title', form.title.trim());
+        formData.append('category', form.category);
+        formData.append('listing_type', form.listing_type);
+        formData.append('price', String(isPaid ? Number(form.price || 0) : 0));
+        if (isRent) {
+          formData.append('price_unit', form.price_unit);
+        }
+        formData.append('condition', form.condition);
+        formData.append('location', form.location.trim());
+        formData.append('description', form.description.trim());
+
+        form.images.forEach((file) => {
+          formData.append('images', file);
+        });
+
+        await api.createListing(formData, token, abortRef.current.signal);
+      }
+
+      navigate(need ? '/needs' : '/listings');
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      setError(err.message);
+    } finally {
+      submitLock.current = false;
+      abortRef.current = null;
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <Header />
+      <main className="wide">
+        <Banner
+          title={title}
+          subtitle={
+            need
+              ? 'Tell the community what you need. Someone might have it!'
+              : 'Share something you want to sell, rent, lend or give away with fellow Infosys Mysore trainees.'
+          }
+          kind={need ? 'need' : 'sports'}
+        />
+        <div className="post-layout">
+          <form className="form-card" onSubmit={submit} noValidate>
+            <h2>{need ? '▤ Need Details' : 'Item Details'}</h2>
+
+            <label className="form-field">
+              Item Name *
+              <input
+                required
+                minLength="2"
+                maxLength="150"
+                value={form.title}
+                onChange={(e) => setField('title', e.target.value)}
+                placeholder="e.g. Yonex Badminton Racket"
+              />
+            </label>
+
+            <div className="two">
+              <label className="form-field">
+                Category *
+                <select value={form.category} onChange={(e) => setField('category', e.target.value)}>
+                  {CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat.replace('_', ' ')}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="form-field">
+                {need ? 'Looking for *' : 'Listing Type *'}
+                <select
+                  value={need ? form.need_type : form.listing_type}
+                  onChange={(e) => setField(need ? 'need_type' : 'listing_type', e.target.value)}
+                >
+                  {(need ? NEED_TYPES : LISTING_TYPES).map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="two">
+              <label className="form-field">
+                {need ? 'Duration' : 'Price (₹)'}
+                <input
+                  type={need ? 'text' : 'number'}
+                  min="1"
+                  disabled={!need && !isPaid}
+                  value={need ? form.duration : form.price}
+                  onChange={(e) => setField(need ? 'duration' : 'price', e.target.value)}
+                  placeholder={need ? 'e.g. 2 weeks' : isPaid ? '₹ Amount' : '0 (Free)'}
+                  required={!need && isPaid}
+                />
+              </label>
+
+              <label className="form-field">
+                {need ? 'Budget (₹)' : isRent ? 'Duration Unit' : 'Item Condition'}
+                {need ? (
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.budget}
+                    onChange={(e) => setField('budget', e.target.value)}
+                    placeholder="Max budget"
+                  />
+                ) : isRent ? (
+                  <select value={form.price_unit} onChange={(e) => setField('price_unit', e.target.value)}>
+                    {RENT_UNITS.map((u) => (
+                      <option key={u} value={u}>
+                        Per {u}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select value={form.condition} onChange={(e) => setField('condition', e.target.value)}>
+                    {ITEM_CONDITIONS.map((c) => (
+                      <option key={c} value={c}>
+                        {c.replace('_', ' ')}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+            </div>
+
+            {!need && isRent && (
+              <label className="form-field">
+                Item Condition *
+                <select value={form.condition} onChange={(e) => setField('condition', e.target.value)}>
+                  {ITEM_CONDITIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {c.replace('_', ' ')}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            <label className="form-field">
+              Location *
+              <input
+                required
+                minLength="2"
+                maxLength="100"
+                value={form.location}
+                onChange={(e) => setField('location', e.target.value)}
+                placeholder="e.g. ECC 12, Food Court 2, Multiplex"
+              />
+            </label>
+
+            <label className="form-field">
+              Description *
+              <textarea
+                required
+                minLength="2"
+                maxLength="2000"
+                value={form.description}
+                onChange={(e) => setField('description', e.target.value)}
+                placeholder="Provide accurate details about item condition, specifications, or pickup arrangements."
+              />
+            </label>
+
+            {!need && (
+              <label className="form-field">
+                Photos (up to 5 images, max 5MB each)
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={(e) => setField('images', Array.from(e.target.files || []))}
+                />
+              </label>
+            )}
+
+            {error && (
+              <p role="alert" className="error">
+                {error}
+              </p>
+            )}
+
+            <button
+              className="primary submit"
+              disabled={submitting}
+              aria-busy={submitting}
+            >
+              {submitting ? '⌁ Submitting…' : `⌁ ${need ? 'Post Need' : 'Post Listing'}`}
+            </button>
+          </form>
+
+          <aside>
+            <TipBox listing={!need} />
+          </aside>
+        </div>
+      </main>
+    </>
+  );
+}

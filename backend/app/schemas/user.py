@@ -13,6 +13,8 @@ class UserResponse(BaseModel):
     email: str
     phone: str
     role: UserRole
+    is_admin: bool = False
+    is_active: bool = True
     joining_date: date
     created_at: datetime
 

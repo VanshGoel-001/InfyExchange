@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import cloudinary
@@ -52,26 +53,32 @@ async def upload_image(
             "Only JPEG, PNG and WebP images are allowed"
         )
 
-    content = await file.read()
-
     max_size = (
         settings.max_image_size_mb
         * 1024
         * 1024
     )
 
-    if len(content) > max_size:
-        raise ValueError(
-            f"Image must be smaller than "
-            f"{settings.max_image_size_mb} MB"
-        )
+    # Stream chunks up to max_size + 1 to prevent unbounded RAM allocation (OOM guard)
+    chunk_size = 64 * 1024
+    byte_array = bytearray()
+    
+    while chunk := await file.read(chunk_size):
+        byte_array.extend(chunk)
+        if len(byte_array) > max_size:
+            raise ValueError(
+                f"Image exceeds the maximum allowed size of {settings.max_image_size_mb} MB."
+            )
 
+    content = bytes(byte_array)
     _validate_image_magic_bytes(content)
 
     file_stream = io.BytesIO(content)
     file_stream.name = file.filename or "image.jpg"
 
-    result = uploader.upload(
+    # Execute synchronous Cloudinary network call in a worker thread so event loop is not blocked
+    result = await asyncio.to_thread(
+        uploader.upload,
         file_stream,
         folder=f"infyexchange/listings/{listing_id}",
         resource_type="image",
