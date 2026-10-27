@@ -159,7 +159,8 @@ def login(
 
     token = create_access_token(user.id)
 
-    # "bearer" is the OAuth token type literal, not a secret
+    # "bearer" is the OAuth token type literal, not a secret (B105 is a known
+    # bandit false positive for this key name; suppressed inline below).
     return {
         "access_token": token,
         "token_type": "bearer",  # nosec B105
