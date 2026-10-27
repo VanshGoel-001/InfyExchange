@@ -171,7 +171,8 @@ export default function AuthPage({ register = false }) {
                 type={showPassword ? 'text' : 'password'}
                 value={form.password}
                 onChange={(e) => setField('password', e.target.value)}
-                placeholder="At least 8 characters"
+                placeholder="8+ chars, incl. a letter and a number"
+                title="Password must be 8-100 characters and contain at least one letter and one number"
               />
               <button
                 type="button"
