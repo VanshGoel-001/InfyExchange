@@ -142,7 +142,7 @@ export default function AuthPage({ register = false }) {
                 required
                 value={form.email}
                 onChange={(e) => setField('email', e.target.value)}
-                placeholder="you@gmail.com"
+                placeholder="you@example.com"
               />
             </label>
 
