@@ -5,9 +5,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
 from app.database import Base, engine
+from app.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.models import (
     Interest,
     Listing,
@@ -25,12 +27,22 @@ from app.routers import (
 )
 from app.services.cleanup import cleanup_loop
 from app.services.migration import apply_migrations
+from app.utils.logging_utils import get_security_logger, setup_logging
+
+setup_logging()
+
+security_logger = get_security_logger()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
     apply_migrations()
+
+    security_logger.info(
+        "service_started environment=%s",
+        settings.environment,
+    )
 
     cleanup_task = asyncio.create_task(
         cleanup_loop()
@@ -44,6 +56,8 @@ async def lifespan(app: FastAPI):
         await cleanup_task
     except asyncio.CancelledError:
         pass
+
+    security_logger.info("service_stopped")
 
 
 is_production = settings.environment.lower() == "production"
@@ -106,9 +120,23 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+# Opt-in host header validation for deployments where the public host is known
+if settings.allowed_hosts.strip():
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[
+            host.strip()
+            for host in settings.allowed_hosts.split(",")
+            if host.strip()
+        ],
+    )
+
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 app.include_router(auth.router)

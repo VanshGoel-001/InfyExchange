@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,6 +20,9 @@ from app.services.auth import (
     verify_password,
 )
 from app.services.rate_limit import (
+    account_key,
+    account_login_limiter,
+    client_key,
     login_limiter,
     register_limiter,
 )
@@ -27,6 +32,8 @@ router = APIRouter(
     prefix="/api/auth",
     tags=["Authentication"],
 )
+
+security_logger = logging.getLogger("security")
 
 
 @router.post(
@@ -42,11 +49,10 @@ def register(
 
     client_ip = request.client.host if request.client else "unknown"
 
-    if not register_limiter.is_allowed(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many registration attempts. Please try again later.",
-        )
+    register_limiter.enforce(
+        client_key(request, "register"),
+        "Too many registration attempts. Please try again later.",
+    )
 
     email = data.email.lower()
 
@@ -124,11 +130,16 @@ def login(
 
     client_ip = request.client.host if request.client else "unknown"
 
-    if not login_limiter.is_allowed(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many login attempts. Please try again later.",
-        )
+    login_limiter.enforce(
+        client_key(request, "login"),
+        "Too many login attempts. Please try again later.",
+    )
+
+    # Per-account limit blunts distributed brute force from rotating IPs
+    account_login_limiter.enforce(
+        account_key(data.email),
+        "Too many login attempts for this account. Please try again later.",
+    )
 
     user = db.scalar(
         select(User).where(
@@ -140,6 +151,7 @@ def login(
         data.password,
         user.password_hash,
     ):
+        security_logger.warning("login_failed ip=%s", client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -147,9 +159,10 @@ def login(
 
     token = create_access_token(user.id)
 
+    # "bearer" is the OAuth token type literal, not a secret
     return {
         "access_token": token,
-        "token_type": "bearer",
+        "token_type": "bearer",  # nosec B105
     }
 
 

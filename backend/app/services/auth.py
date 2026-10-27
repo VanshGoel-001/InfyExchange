@@ -2,11 +2,14 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.hashers.argon2 import Argon2Hasher
 
 from app.config import settings
 
 
-password_hash = PasswordHash.recommended()
+# Pin Argon2id explicitly instead of relying on the library default, so a
+# pwdlib upgrade cannot silently change the hashing algorithm.
+password_hash = PasswordHash((Argon2Hasher(),))
 
 
 def hash_password(password: str) -> str:

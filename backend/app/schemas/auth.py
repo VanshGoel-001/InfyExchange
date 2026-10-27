@@ -1,6 +1,7 @@
 from datetime import date
+import re
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.utils.enums import UserRole
 
@@ -24,11 +25,21 @@ class RegisterRequest(BaseModel):
 
     joining_date: date
 
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        """Require at least one letter and one digit alongside the length rule."""
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+            raise ValueError(
+                "Password must contain at least one letter and one number"
+            )
+        return value
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
 
-    password: str
+    password: str = Field(max_length=100)
 
 
 class TokenResponse(BaseModel):

@@ -100,6 +100,7 @@ export const api = {
   received: (token) => request('/interests/received', { token, retries: 1 }),
   accept: (id, token) => request(`/interests/${id}/accept`, { method: 'PATCH', token }),
   reject: (id, token) => request(`/interests/${id}/reject`, { method: 'PATCH', token }),
+  contact: (id, token) => request(`/interests/${id}/contact`, { token }),
   summary: (token) => request('/users/me/summary', { token, retries: 1 }),
 
   // Admin Control Plane
