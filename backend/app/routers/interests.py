@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import (
     Session,
@@ -17,6 +17,11 @@ from app.schemas.interest import (
     ContactResponse,
     InterestCreate,
     InterestResponse,
+)
+from app.services.rate_limit import (
+    client_key,
+    contact_limiter,
+    create_limiter,
 )
 from app.utils.enums import InterestStatus, ListingStatus
 
@@ -73,9 +78,15 @@ def _serialize_interest(
 def create_interest(
     listing_id: int,
     data: InterestCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+
+    create_limiter.enforce(
+        client_key(request, "create-interest"),
+        "Too many interests submitted. Please try again later.",
+    )
 
     listing = db.get(Listing, listing_id)
 
@@ -301,9 +312,15 @@ def reject_interest(
 )
 def get_connection_contact(
     interest_id: int,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+
+    contact_limiter.enforce(
+        client_key(request, "contact"),
+        "Too many requests. Please try again later.",
+    )
 
     interest = db.scalar(
         select(Interest)

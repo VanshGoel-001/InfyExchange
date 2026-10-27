@@ -9,6 +9,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
 )
 from sqlalchemy import select
@@ -32,6 +33,11 @@ from app.schemas.listing import (
 from app.services.cloudinary import (
     delete_image,
     upload_image,
+)
+from app.services.rate_limit import (
+    client_key,
+    create_limiter,
+    read_limiter,
 )
 from app.utils.enums import (
     ItemCondition,
@@ -104,6 +110,7 @@ def _serialize_listing_detail(
     status_code=201,
 )
 async def create_listing(
+    request: Request,
     title: str = Form(..., min_length=2, max_length=150),
     category: ListingCategory = Form(...),
     listing_type: ListingType = Form(...),
@@ -121,6 +128,11 @@ async def create_listing(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+
+    create_limiter.enforce(
+        client_key(request, "create-listing"),
+        "Too many listings created. Please try again later.",
+    )
 
     if len(images) > settings.max_images_per_listing:
         raise HTTPException(
@@ -249,6 +261,7 @@ async def create_listing(
     response_model=list[ListingResponse],
 )
 def get_listings(
+    request: Request,
     search: str | None = Query(None),
     category: ListingCategory | None = Query(None),
     listing_type: ListingType | None = Query(None),
@@ -260,6 +273,11 @@ def get_listings(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
+
+    read_limiter.enforce(
+        client_key(request, "read-listings"),
+        "Too many requests. Please slow down.",
+    )
 
     query = select(Listing).options(
         joinedload(Listing.owner),

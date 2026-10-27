@@ -16,6 +16,7 @@ from app.models.listing import Listing
 from app.models.need import Need
 from app.models.user import User
 from app.schemas.user import UserResponse
+from app.services.rate_limit import admin_limiter, rate_limit_dependency
 from app.utils.enums import InterestStatus, ListingStatus, NeedStatus, UserRole
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/admin",
     tags=["Admin"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[
+        Depends(get_current_admin),
+        Depends(rate_limit_dependency(
+            admin_limiter,
+            "admin",
+            "Too many admin requests. Please slow down.",
+        )),
+    ],
 )
 
 

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
@@ -10,6 +10,11 @@ from app.dependencies import get_current_user
 from app.models.need import Need
 from app.models.user import User
 from app.schemas.need import NeedCreate, NeedResponse
+from app.services.rate_limit import (
+    client_key,
+    create_limiter,
+    read_limiter,
+)
 from app.utils.enums import (
     ListingCategory,
     NeedStatus,
@@ -52,9 +57,15 @@ def _serialize_need(need: Need) -> dict:
 )
 def create_need(
     data: NeedCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+
+    create_limiter.enforce(
+        client_key(request, "create-need"),
+        "Too many needs created. Please try again later.",
+    )
 
     now = datetime.utcnow()
 
@@ -108,6 +119,7 @@ def create_need(
     response_model=list[NeedResponse],
 )
 def get_needs(
+    request: Request,
     search: str | None = Query(None),
     category: ListingCategory | None = Query(None),
     need_type: NeedType | None = Query(None),
@@ -116,6 +128,11 @@ def get_needs(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
+
+    read_limiter.enforce(
+        client_key(request, "read-needs"),
+        "Too many requests. Please slow down.",
+    )
 
     query = select(Need).options(
         joinedload(Need.user)
