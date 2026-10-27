@@ -53,10 +53,10 @@ def cleanup_expired_data():
 
         db.commit()
 
-        print(
-            f"[CLEANUP] "
-            f"Deleted {len(expired_listings)} listings "
-            f"and {len(expired_needs)} needs."
+        logger.info(
+            "Cleanup deleted %d listing(s) and %d need(s).",
+            len(expired_listings),
+            len(expired_needs),
         )
 
     finally:
@@ -70,10 +70,8 @@ async def cleanup_loop():
         try:
             cleanup_expired_data()
 
-        except Exception as exc:
-            print(
-                f"[CLEANUP ERROR] {exc}"
-            )
+        except Exception:
+            logger.exception("Cleanup loop iteration failed.")
 
         # Run once every 24 hours.
         await asyncio.sleep(60 * 60 * 24)
