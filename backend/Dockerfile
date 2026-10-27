@@ -10,7 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Upgrade build tooling and the CA bundle before resolving dependencies so the
+# image does not inherit a stale pip/certifi trust store (Oct-2026 advisory).
+# Build with `--no-cache` so layers never retain an older certificate bundle.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel certifi \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
