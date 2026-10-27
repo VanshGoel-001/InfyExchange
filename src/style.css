@@ -91,3 +91,19 @@ html,body,#root{max-width:100%;overflow-x:hidden}img{max-width:100%}
   .nav-actions.open:not(.account-actions){display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .nav-actions.open:not(.account-actions) a{justify-content:center;text-align:center}
 }
+
+/* Phone ergonomics: iOS Safari force-zooms the viewport on focus for any text
+   control under 16px, and sub-44px controls are hard to tap. Text fields use
+   16px on phones to prevent the zoom, and interactive elements get comfortable
+   minimum tap sizes — consistent with the 44px targets the nav/drawer already use. */
+@media screen and (max-width:760px){
+  input,select,textarea{font-size:16px}
+  input:not([type=checkbox]):not([type=radio]),select{min-height:44px}
+  .primary,.outline{min-height:44px}
+  .mini-table button,.table button{min-height:44px}
+  .contact-reveal a{display:inline-flex;align-items:center;min-height:44px;padding:4px 0}
+}
+/* Keep a revealed password clear of the show/hide eye icon. Bound to the field
+   that owns the eye (name="password") rather than [type=password], so the gutter
+   stays reserved when the toggle flips the input to type=text. */
+input[name=password]{padding-right:38px}
