@@ -1,0 +1,54 @@
+name: CI
+
+# Runs the same gates used locally: frontend build + dependency audit,
+# backend tests + static analysis + dependency vulnerability audit.
+on:
+  push:
+    branches: [main, ship]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (build + npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit dependencies (fail on high/critical)
+        run: npm audit --audit-level=high
+      - name: Build
+        run: npm run build
+
+  backend:
+    name: Backend (tests + bandit + pip-audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Fresh build tooling and CA bundle (addresses the Oct-2026 pip/certifi
+      # trust-store advisory) before anything is resolved or installed.
+      - name: Upgrade build tooling
+        run: python -m pip install --upgrade pip setuptools wheel certifi
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q
+      - name: Static security analysis (bandit)
+        run: python -m bandit -r app -q
+      # Gate on known vulnerabilities in the production dependency set.
+      - name: Dependency vulnerability audit (pip-audit)
+        run: python -m pip_audit -r requirements.txt --progress-spinner off

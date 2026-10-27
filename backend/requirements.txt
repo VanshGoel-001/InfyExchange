@@ -1,20 +1,21 @@
-fastapi
-uvicorn[standard]
+# Pinned to versions verified against the deployed application
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 
-sqlalchemy
-psycopg[binary]
+sqlalchemy==2.1.2
+psycopg[binary]==3.3.6
 
-pydantic
-pydantic-settings
-email-validator
+pydantic==2.13.5
+pydantic-settings==2.15.0
+email-validator==2.3.0
 
-python-multipart
+python-multipart==0.0.32
 
-pyjwt
-pwdlib[argon2]
+pyjwt==2.15.1
+pwdlib[argon2]==0.3.1
 
-cloudinary
+cloudinary==1.46.2
 
-alembic
+alembic==1.20.0
 
-python-dotenv
+python-dotenv==1.2.4

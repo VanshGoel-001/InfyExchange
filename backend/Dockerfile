@@ -10,7 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Upgrade build tooling and the CA bundle before resolving dependencies so the
+# image does not inherit a stale pip/certifi trust store (Oct-2026 advisory).
+# Build with `--no-cache` so layers never retain an older certificate bundle.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel certifi \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
@@ -27,5 +31,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
-# Launch uvicorn with proxy headers enabled so rate limiter captures real remote IPs
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Launch uvicorn with proxy headers enabled so rate limiter captures real remote IPs,
+# plus concurrency/keep-alive caps to bound resource exhaustion
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*", "--limit-concurrency", "200", "--timeout-keep-alive", "30"]

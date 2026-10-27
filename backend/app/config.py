@@ -30,6 +30,29 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:4200"
     allowed_email_domains: str = "gmail.com"
 
+    # --- Security headers (applied by app middleware and nginx) ---
+    referrer_policy: str = "strict-origin-when-cross-origin"
+    permissions_policy: str = "camera=(), microphone=(), geolocation=(), payment=()"
+    # Strict CSP for JSON API responses; documentation endpoints are exempt
+    api_csp: str = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
+    # HSTS is only sent after TLS coverage for the deployed host is confirmed (see runbook)
+    hsts_enabled: bool = False
+    hsts_max_age: int = 15552000  # 180 days
+    hsts_include_subdomains: bool = False
+
+    # Comma-separated hosts accepted in the Host header; empty disables the check
+    allowed_hosts: str = ""
+
+    # --- Rate limits (requests per window, keyed per client IP unless noted) ---
+    rate_limit_window_seconds: int = 60
+    rate_limit_login: int = 10
+    rate_limit_register: int = 5
+    rate_limit_create: int = 10
+    rate_limit_read: int = 120
+    rate_limit_contact: int = 20
+    rate_limit_admin: int = 60
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,

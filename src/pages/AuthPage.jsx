@@ -37,11 +37,10 @@ export default function AuthPage({ register = false }) {
   }, [form.password, form.confirm, register]);
 
   const validateInput = () => {
-    const email = form.email.trim().toLowerCase();
-    if (!email.endsWith('@gmail.com')) {
-      throw new Error('Only @gmail.com email addresses are allowed.');
-    }
-
+    // Email domain policy is enforced authoritatively by the backend
+    // (config-driven `allowed_email_domains` in routers/auth.py) and surfaced
+    // through the flattened API error message; the client must not hardcode it.
+    // Address format is validated by the email input's own type="email".
     if (form.password.length < 8 || form.password.length > 100) {
       throw new Error('Password must be between 8 and 100 characters.');
     }
@@ -143,7 +142,7 @@ export default function AuthPage({ register = false }) {
                 required
                 value={form.email}
                 onChange={(e) => setField('email', e.target.value)}
-                placeholder="you@gmail.com"
+                placeholder="you@example.com"
               />
             </label>
 
@@ -172,7 +171,8 @@ export default function AuthPage({ register = false }) {
                 type={showPassword ? 'text' : 'password'}
                 value={form.password}
                 onChange={(e) => setField('password', e.target.value)}
-                placeholder="At least 8 characters"
+                placeholder="8+ chars, incl. a letter and a number"
+                title="Password must be 8-100 characters and contain at least one letter and one number"
               />
               <button
                 type="button"

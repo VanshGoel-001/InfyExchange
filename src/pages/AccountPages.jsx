@@ -194,8 +194,8 @@ export function ActivityPage() {
 
       <div className="lower-tables">
         <ActivityList title={`My Needs (${data.needs.length})`} items={data.needs} kind="need" />
-        <ActivityList title={`My Interests (${data.sent.length})`} items={data.sent} kind="sent" />
-        <Requests items={data.received} onRespond={respond} busy={busy} />
+        <ActivityList title={`My Interests (${data.sent.length})`} items={data.sent} kind="sent" token={token} />
+        <Requests items={data.received} onRespond={respond} busy={busy} token={token} />
       </div>
     </AppShell>
   );
@@ -330,7 +330,7 @@ export function MyNeedsPage() {
   );
 }
 
-function ActivityList({ title, items, kind }) {
+function ActivityList({ title, items, kind, token }) {
   return (
     <section className="panel mini-table">
       <h2>{title}</h2>
@@ -344,6 +344,9 @@ function ActivityList({ title, items, kind }) {
             </small>
           </b>
           <strong>{kind === 'need' ? `₹${item.budget || 0}` : fmt(item.status)}</strong>
+          {kind === 'sent' && item.status === 'ACCEPTED' && (
+            <ContactReveal interestId={item.id} token={token} />
+          )}
         </div>
       ))}
       {!items.length && <p className="empty">Nothing to show yet.</p>}
@@ -351,7 +354,7 @@ function ActivityList({ title, items, kind }) {
   );
 }
 
-function Requests({ items, onRespond, busy }) {
+function Requests({ items, onRespond, busy, token }) {
   return (
     <section className="panel mini-table">
       <h2>Requests Received ({items.length})</h2>
@@ -384,9 +387,62 @@ function Requests({ items, onRespond, busy }) {
               </button>
             </span>
           )}
+          {item.status === 'ACCEPTED' && <ContactReveal interestId={item.id} token={token} />}
         </div>
       ))}
       {!items.length && <p className="empty">No requests received.</p>}
     </section>
+  );
+}
+
+/**
+ * Lazily reveals the counterparty's contact for an ACCEPTED interest.
+ * Nothing is fetched (and no PII is exposed) until the user explicitly clicks,
+ * which respects the backend contact rate-limiter. The endpoint still enforces
+ * acceptance + participant membership server-side; this UI only surfaces it.
+ */
+function ContactReveal({ interestId, token }) {
+  const [state, setState] = useState('idle'); // idle | loading | revealed | error
+  const [contact, setContact] = useState(null);
+  const [error, setError] = useState('');
+
+  const reveal = async () => {
+    setState('loading');
+    setError('');
+    try {
+      const data = await api.contact(interestId, token);
+      setContact(data);
+      setState('revealed');
+    } catch (e) {
+      setError(e.message || 'Could not load contact details.');
+      setState('error');
+    }
+  };
+
+  if (state === 'revealed' && contact) {
+    return (
+      <span className="contact-reveal" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <b>{contact.name}</b>
+        <small>
+          <a href={`mailto:${contact.email}`}>{contact.email}</a>
+        </small>
+        <small>
+          <a href={`tel:${contact.phone}`}>{contact.phone}</a>
+        </small>
+      </span>
+    );
+  }
+
+  return (
+    <span className="contact-reveal">
+      <button className="outline compact" disabled={state === 'loading'} onClick={reveal}>
+        {state === 'loading' ? 'Revealing…' : 'Reveal contact'}
+      </button>
+      {state === 'error' && (
+        <small className="error" style={{ marginLeft: 8 }}>
+          {error}
+        </small>
+      )}
+    </span>
   );
 }
