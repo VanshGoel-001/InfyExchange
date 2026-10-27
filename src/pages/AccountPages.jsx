@@ -421,18 +421,20 @@ function ContactReveal({ interestId, token }) {
 
   if (state === 'revealed' && contact) {
     return (
-      <div className="contact-reveal" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span className="contact-reveal" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <b>{contact.name}</b>
         <small>
-          <a href={`mailto:${contact.email}`}>{contact.email}</a> ·{' '}
+          <a href={`mailto:${contact.email}`}>{contact.email}</a>
+        </small>
+        <small>
           <a href={`tel:${contact.phone}`}>{contact.phone}</a>
         </small>
-      </div>
+      </span>
     );
   }
 
   return (
-    <div className="contact-reveal">
+    <span className="contact-reveal">
       <button className="outline compact" disabled={state === 'loading'} onClick={reveal}>
         {state === 'loading' ? 'Revealing…' : 'Reveal contact'}
       </button>
@@ -441,6 +443,6 @@ function ContactReveal({ interestId, token }) {
           {error}
         </small>
       )}
-    </div>
+    </span>
   );
 }
