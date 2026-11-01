@@ -9,9 +9,9 @@ No secret values are listed here. Items marked **UNKNOWN** must be discovered on
 
 | Asset | Version / image | Location | Exposure |
 |---|---|---|---|
-| Frontend SPA | React 19.3, Vite 8.3, react-router 7.18 (lockfile `package-lock.json`) | `src/` → `dist/` | Public static (Cloudflare Pages `<FRONTEND_DOMAIN>`; also served by nginx `/`) |
+| Frontend SPA | React 19.3, Vite 8.3, react-router 7.18 (lockfile `package-lock.json`) | `src/` → `dist/` | Public static (Cloudflare Pages / Vercel `<FRONTEND_DOMAIN>`); not served by the backend nginx |
 | API | FastAPI 0.142.2, Uvicorn 0.54.0, Python 3.12-slim | `backend/` | Public via `web` → `/api/*` only |
-| Web tier | nginx:alpine | `nginx.conf` | Public port 80 (host) |
+| Web tier | nginx:alpine | `backend/nginx.conf` | Public port 80 (host); API reverse proxy only (no SPA) |
 | Database | PostgreSQL 17-alpine | compose volume `postgres_data` | Internal compose network only |
 | Media store | Cloudinary (`infyexchange/listings/...`) | external SaaS | Public URLs (listing images) |
 | Host | Oracle Cloud VM `<OCI_VM_SHAPE>`, `<OCI_REGION>`, OS `<OCI_VM_OS>` | OCI | **UNKNOWN** until discovered |
@@ -25,7 +25,7 @@ No secret values are listed here. Items marked **UNKNOWN** must be discovered on
 | `<ORIGIN_IP>` | `<ADMIN_SSH_PORT>` | `<ADMIN_IP>` only | SSH keys, no root login |
 | `api:8000` | 8000 | compose `edge` network | Not published to host |
 | `postgres:5432` | 5432 | compose `internal` network | Not published; `internal: true` |
-| Dev compose `backend/docker-compose.yml` | 5432 | Host localhost | **Dev only** — do not run on untrusted hosts |
+| Dev profile `postgres-dev` (`backend/docker-compose.yml`) | 5432 | Host localhost | **Dev only** (`--profile dev`) — do not run on untrusted hosts |
 
 ## 3. Data Assets
 
