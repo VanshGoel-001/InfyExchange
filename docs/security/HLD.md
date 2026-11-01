@@ -11,12 +11,12 @@ verified from the repository are written as placeholders in angle brackets and a
 | Component | Discovered technology | Evidence |
 |---|---|---|
 | Frontend | React 19.3 + Vite 8.3 (single-page app), built to `dist/`; lockfile committed | `src/`, `vite.config.js`, `package.json`, `package-lock.json` |
-| Frontend hosting (target) | Cloudflare Pages (`<FRONTEND_DOMAIN>` to confirm) | spec target; exact domain unknown |
+| Frontend hosting (target) | Cloudflare Pages / Vercel (`<FRONTEND_DOMAIN>` to confirm) | spec target; exact domain unknown |
 | Edge network | Cloudflare proxy/DNS for the API host (`<API_DOMAIN>` to confirm) | target architecture |
-| Web tier | `nginx:alpine`, serves `dist/` + proxies `/api/*` | `nginx.conf`, `docker-compose.prod.yml` |
+| Web tier | `nginx:alpine` API gateway: proxies `/api/*` + `/health` (no SPA) | `backend/nginx.conf`, `backend/docker-compose.yml` |
 | API | FastAPI 0.142.2 on Uvicorn 0.54.0, Python 3.12 image | `backend/Dockerfile`, `backend/requirements.txt` |
 | AuthN | JWT HS256 (PyJWT), 7-day access tokens, Argon2id password hashing (pwdlib) | `app/services/auth.py` |
-| Database | PostgreSQL 17 (alpine), no published port in prod compose | `docker-compose.prod.yml` |
+| Database | PostgreSQL 17 (alpine), no published port in prod compose | `backend/docker-compose.yml` |
 | ORM / migrations | SQLAlchemy 2.1.2 + Alembic (migrations applied at app startup) | `app/services/migration.py` |
 | Media | Cloudinary (server-side credentials only) | `app/services/cloudinary.py` |
 | Host OS | Oracle Cloud VM — OS/version **must be discovered** (`<OCI_VM_OS>`) | spec |
@@ -27,20 +27,19 @@ verified from the repository are written as placeholders in angle brackets and a
 ```
 Browser ──HTTPS──► Cloudflare edge (DNS, TLS, DDoS)
    │                    │
-   │                    ├──► Cloudflare Pages (static SPA)
+   │                    ├──► Cloudflare Pages / Vercel (static SPA)
    │                    └──► <API_DOMAIN> → Oracle VM → nginx :80
-   │                                               ├─ /        → dist/ (SPA)
-   │                                               └─ /api/*   → api:8000 (FastAPI)
+   │                                               └─ /api/*, /health → api:8000 (FastAPI)
    │                                                                  │
    │                                                                  └─► postgres:5432
    │                                                                      (internal network only)
 ```
 
-### Container topology (`docker-compose.prod.yml`)
+### Container topology (`backend/docker-compose.yml`, `prod` profile)
 
 | Service | Published ports | Networks | Privileges |
 |---|---|---|---|
-| `web` (nginx) | `80` (only public port) | `edge` | `cap_drop: ALL` + 5 minimal caps, `read_only`, `no-new-privileges` |
+| `web` (nginx API gateway) | `80` (only public port) | `edge` | `cap_drop: ALL` + 5 minimal caps, `read_only`, `no-new-privileges` |
 | `api` (uvicorn) | none | `edge`, `internal` | non-root `appuser`, `cap_drop: ALL`, `no-new-privileges` |
 | `postgres` | none | `internal` (`internal: true`) | `no-new-privileges` |
 
@@ -51,7 +50,7 @@ the compose project.
 
 | ID | Boundary | Implemented controls | Deployment-side controls (verify) |
 |---|---|---|---|
-| TB-01 | Browser → Cloudflare | HTTPS enforced at edge; app sets `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, CSP (report-only for SPA), HSTS (gated) | Cloudflare SSL mode Full (strict) recommended |
+| TB-01 | Browser → Cloudflare | HTTPS enforced at edge; app sets `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, CSP (report-only on the API origin; SPA HTML headers set on the static host), HSTS (gated) | Cloudflare SSL mode Full (strict) recommended |
 | TB-02 | Cloudflare → origin | Origin port 80 is the only ingress; app rejects nothing by cloud IP today (not verifiable from repo) | Cloudflare IP allowlist on OCI NSG/UFW, Authenticated Origin Pulls — see runbook |
 | TB-03 | nginx → API | API container has no published port; only `web` reaches `api:8000` over the `edge` network | — |
 | TB-04 | API → PostgreSQL | DB on `internal: true` network, no published port, single app role | `pg_hba.conf` review on host |
@@ -90,11 +89,11 @@ migrations executed at application startup, and lack of token revocation.
 | Rate limiting (configurable, `Retry-After`, memory-bounded) | `backend/app/services/rate_limit.py`, routers `auth/listings/needs/interests/admin` |
 | AuthN/AuthZ logging + password policy | `backend/app/dependencies.py`, `backend/app/routers/auth.py`, `backend/app/schemas/auth.py` |
 | CORS tightening + opt-in Host validation | `backend/app/main.py`, `backend/app/config.py` |
-| Edge hardening | `nginx.conf` |
-| Runtime hardening | `docker-compose.prod.yml`, `backend/Dockerfile` |
-| Supply chain | `backend/requirements.txt` (pinned), `backend/requirements-dev.txt` (new) |
+| Edge hardening | `backend/nginx.conf` |
+| Runtime hardening | `backend/docker-compose.yml`, `backend/Dockerfile` |
+| Supply chain | `backend/requirements.txt` (pinned: runtime + dev/security tooling) |
 | Tests | `backend/tests/` (new), `backend/pytest.ini` (new) |
-| Config templates | `backend/.env.example`, `.env.prod.example` (new) |
+| Config templates | `backend/.env.example` (single dev + prod template) |
 
 ## 6. What This Iteration Does Not Do
 

@@ -22,7 +22,7 @@ cd backend
 ```
 
 Setup (fresh machine): `python -m venv .venv`;
-`.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`.
+`.venv\Scripts\python.exe -m pip install -r requirements.txt`.
 
 ### Execution record — 2026-10-21 (local, SQLite isolation)
 
@@ -31,8 +31,8 @@ Setup (fresh machine): `python -m venv .venv`;
 | Command | `.venv\Scripts\python.exe -m pytest -q` |
 | Result | **43 passed, 0 failed** (10.4 s) |
 | Static analysis | `bandit -r app` → **0 issues** (B105 `"bearer"` literal suppressed with justification and comment) |
-| Compose validation | `docker compose -f docker-compose.prod.yml config` → **valid** (exit 0; fails fast when required vars are absent — verified) |
-| nginx syntax | **BLOCKED** — container image pull failed in this environment; run `docker run --rm -v "%cd%/nginx.conf:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t` before deploy |
+| Compose validation | `docker compose --profile prod config` (in `backend/`): **re-verify** after the compose merge — YAML validated, but `docker compose config` was not re-run in this environment |
+| nginx syntax | **BLOCKED** — container image pull failed in this environment; run `docker run --rm -v "%cd%/backend/nginx.conf:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t` before deploy |
 
 ### Automated case map
 
@@ -86,7 +86,7 @@ command output) — do not paste secrets.
 | ID | Procedure | Expected |
 |---|---|---|
 | NET-001 | From an external host: `nc -zv <ORIGIN_IP> 5432` | Connection refused/timeout |
-| NET-002 | `docker compose -f docker-compose.prod.yml ps --format json` on the VM; external scan of <ORIGIN_IP> | Only `80/tcp` (and admin SSH) open; no `8000`, no `5432` published |
+| NET-002 | `docker compose --profile prod ps --format json` on the VM; external scan of <ORIGIN_IP> | Only `80/tcp` (and admin SSH) open; no `8000`, no `5432` published |
 | NET-003 | SSH from authorized IP; SSH from an unauthorized source | Authorized works; unauthorized times out |
 | NET-004 | `curl -H "Host: <API_DOMAIN>" http://<ORIGIN_IP>/api/health` from an external host | Blocked after Cloudflare allowlist (expected 403/timeout from OCI NSG) |
 

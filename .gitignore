@@ -26,10 +26,10 @@ htmlcov/
 
 # ---- Secrets: never commit real credentials ----
 # backend/.env holds DATABASE_URL, SECRET_KEY and Cloudinary keys.
+# backend/.env.example is the single tracked template (dev + prod).
 .env
 .env.*
 !.env.example
-!.env.prod.example
 
 # ---- Docker ----
 # Postgres data lives in the named volume `postgres_data`, nothing local to ignore.
