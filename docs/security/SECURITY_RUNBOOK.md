@@ -18,9 +18,9 @@ the repository. Never paste secrets into tickets, chat, or this document.
 | `<ADMIN_IP>` | Your administrative source IP | `curl ifconfig.me` from admin host |
 | `<SSH_USER>` | Admin login user | existing access path |
 
-## 1. Required production environment (root `.env` next to compose file)
+## 1. Required production environment (`backend/.env`, next to the compose file)
 
-Copy `.env.prod.example` → `.env`, fill every `CHANGE_ME`, then `chmod 600 .env`.
+Copy `backend/.env.example` → `backend/.env`, fill every `CHANGE_ME`, then `chmod 600 .env`.
 
 | Variable | Rule |
 |---|---|
@@ -87,9 +87,10 @@ MaxAuthTries 4
 1. Confirm `https://<API_DOMAIN>/health` works and `http://` redirects (Cloudflare "Always Use
    HTTPS").
 2. If the origin needs TLS (Cloudflare Full strict): install a Cloudflare Origin CA certificate
-   on nginx, listen 443 with it, redirect 80→443; keep the ACME `/.well-known/` location.
-3. Burn-in CSP: keep `Content-Security-Policy-Report-Only`, exercise the SPA, then rename the
-   header in `nginx.conf` to `Content-Security-Policy` and redeploy.
+   on nginx (mount it via a volume and publish `443`), `listen 443` with it, and redirect 80→443.
+3. Burn-in CSP: keep `Content-Security-Policy-Report-Only`, then rename the header to
+   `Content-Security-Policy` and redeploy. The SPA's HTML CSP is burned in on the static host
+   (Cloudflare Pages `_headers` / `vercel.json`), not in `backend/nginx.conf` (API origin only).
 4. Enable HSTS gradually: set `HSTS_ENABLED=true` with `HSTS_MAX_AGE=300`, deploy, verify no
    breakage; raise to 86400 → 604800 → 15552000. Leave `HSTS_INCLUDE_SUBDOMAINS=false` until
    every subdomain is HTTPS.
@@ -114,8 +115,8 @@ MaxAuthTries 4
 Create (daily cron on the VM):
 
 ```bash
-cd /opt/infyexchange   # compose project path
-docker compose -f docker-compose.prod.yml exec -T postgres \
+cd /opt/infyexchange/backend   # compose project path
+docker compose --profile prod exec -T postgres \
   pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > /var/backups/infy_$(date +%F).dump
 age -r <BACKUP_PUBKEY> -o /var/backups/infy_$(date +%F).dump.age /var/backups/infy_$(date +%F).dump
 rm /var/backups/infy_$(date +%F).dump
@@ -137,18 +138,20 @@ Record outcome (REC-001…003). A backup never restored is not a recovery mechan
 
 ## 8. Deploy, verify, rollback (change management)
 
-Pre-deploy: `git status` clean; `docker compose -f docker-compose.prod.yml config -q` passes;
+Pre-deploy: `git status` clean; `docker compose --profile prod config -q` (in `backend/`) passes;
 `pytest` green; `bandit` clean.
 
 Deploy:
 
 ```bash
-cd backend   # or project root depending on where you build
-npm run build                     # refresh dist/ for the web container
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml ps
+cd backend                        # the backend deploy unit (compose + Dockerfile + nginx.conf)
+docker compose --profile prod up -d --build
+docker compose --profile prod ps
 curl -fsS http://127.0.0.1/health || echo "API unhealthy"
 ```
+
+The frontend is built and deployed separately to Cloudflare Pages / Vercel; `npm run build` is no
+longer part of this backend deploy. Set `VITE_API_BASE_URL` to this API origin on that host.
 
 Post-deploy smoke: login with a synthetic account → 200; `PUT` another user's listing → 403;
 `curl -sI /api/...` shows the security headers; `docker compose logs api | grep service_started`.
@@ -158,8 +161,8 @@ Rollback per change of this iteration:
 | Change | Rollback |
 |---|---|
 | App middleware/headers/limits | `git revert <commit>` of backend changes; rebuild api (`up -d --build api`). No DB migration involved. |
-| Compose hardening | Restore previous `docker-compose.prod.yml` from git; `docker compose up -d`. Networks are recreated; data volume untouched. If a container fails to start due to `cap_drop`/`read_only`, remove those two keys for that service. |
-| nginx hardening | Restore previous `nginx.conf`; `docker compose restart web`. If CSP breaks the SPA, it is report-only by default; if you already enforced it, switch the header name back to `-Report-Only`. |
+| Compose hardening | Restore previous `backend/docker-compose.yml` from git; `docker compose --profile prod up -d`. Networks are recreated; data volume untouched. If a container fails to start due to `cap_drop`/`read_only`, remove those two keys for that service. |
+| nginx hardening | Restore previous `backend/nginx.conf`; `docker compose --profile prod restart web`. The gateway CSP is report-only by default; the SPA's HTML CSP lives on the static host. |
 | Pinned requirements | Restore previous `requirements.txt`; rebuild api. |
 | Env template changes | `.env` untouched by this iteration except new optional keys (`HSTS_ENABLED`, `ALLOWED_HOSTS`) with safe defaults. |
 

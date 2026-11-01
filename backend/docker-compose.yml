@@ -1,19 +1,162 @@
+# InfyExchange backend — unified Compose (dev + prod selected by profile).
+#
+# The frontend is a static SPA deployed separately (Vercel / Cloudflare Pages) and
+# is NOT part of this stack. This file is the self-contained deployable unit for the
+# Oracle VM (or any single host): run it with the "prod" profile to bring up
+# Postgres + API + an nginx reverse proxy that fronts only the API.
+#
+# Required prod secrets (place them in a `.env` next to this file, or export them —
+# see backend/.env.example): SECRET_KEY, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
+# CORS_ORIGINS, CLOUDINARY_*. `${VAR:?}` makes the stack fail fast instead of booting
+# with weak defaults.
+#
+# Commands:
+#   dev  (local Postgres for a host-run `uvicorn --reload`):
+#       docker compose --profile dev up -d
+#   prod (full backend behind the reverse proxy):
+#       docker compose --profile prod up -d --build
 services:
-  postgres:
+  # ---- Development: Postgres published to the host for a locally-run API ----
+  # Dev only: fixed local creds and an exposed port. Never run on an untrusted host.
+  postgres-dev:
     image: postgres:17
-    container_name: infyexchange-postgres
+    container_name: infyexchange-postgres-dev
+    profiles: ["dev"]
     restart: unless-stopped
-
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: infyexchange
-
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
 
+  # ---- Production: internal database, no published port, required secrets ----
+  postgres:
+    image: postgres:17-alpine
+    container_name: infyexchange-postgres
+    profiles: ["prod"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: infyexchange-api
+    profiles: ["prod"]
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be a long random value}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:?CLOUDINARY_CLOUD_NAME is required}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:?CLOUDINARY_API_KEY is required}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:?CLOUDINARY_API_SECRET is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must list the frontend origins (Vercel / Cloudflare Pages)}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-gmail.com}
+      HSTS_ENABLED: ${HSTS_ENABLED:-false}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      DB_POOL_SIZE: 15
+      DB_MAX_OVERFLOW: 25
+      DB_POOL_RECYCLE: 1800
+    networks:
+      - edge
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 150
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # API gateway: the only public surface. Reverse-proxies /api and /health to the
+  # backend; it does NOT serve the SPA (that is hosted on a static provider now).
+  web:
+    image: nginx:alpine
+    container_name: infyexchange-web
+    profiles: ["prod"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      # Publish 443 after installing TLS certs for this host:
+      # - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      - DAC_OVERRIDE
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+          pids: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  edge:
+  # Host-isolated network: postgres is unreachable from outside the compose stack
+  internal:
+    internal: true
 
 volumes:
+  postgres_dev_data:
   postgres_data:

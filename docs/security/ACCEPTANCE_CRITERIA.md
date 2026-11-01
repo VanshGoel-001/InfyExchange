@@ -9,7 +9,7 @@ the deployed stack (record evidence); **OPEN** = not yet satisfied.
 
 | # | Criterion | Status | Evidence / action |
 |---|---|---|---|
-| C1 | PostgreSQL is not publicly reachable | MET (repo) + verify (deploy) | No published port; `internal: true` network (`docker-compose.prod.yml`). Verify NET-001/002 |
+| C1 | PostgreSQL is not publicly reachable | MET (repo) + verify (deploy) | No published port; `internal: true` network (`backend/docker-compose.yml`, `prod` profile). Verify NET-001/002 |
 | C2 | Administrative access appropriately restricted | OPEN (deploy) | Procedure in runbook §3/§4; needs OCI NSG + UFW + SSH config evidence |
 | C3 | No unintended management ports public | MET (repo) | Only `web:80` published; API/DB unpublished; Swagger disabled in production (`main.py`) |
 | C4 | HTTPS valid for frontend and public API | OPEN (deploy) | Verify TLS-001/002/005; HSTS stays off until confirmed |
@@ -43,9 +43,9 @@ the deployed stack (record evidence); **OPEN** = not yet satisfied.
 
 - Automated suite: **43/43 PASS** (`backend/tests`, SQLite isolation).
 - `bandit -r backend/app`: **0 issues**.
-- `docker compose -f docker-compose.prod.yml config`: **valid**; fails fast on missing secrets.
+- `docker compose --profile prod config` (in `backend/`): **re-verify** after the compose merge — YAML validated here, but `docker compose config` was not re-run in this environment.
 - nginx config syntax: **NOT RUN** (registry pull blocked in this environment) — run
-  `docker run --rm -v "%cd%/nginx.conf:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t`.
+  `docker run --rm -v "%cd%/backend/nginx.conf:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t`.
 - `.env` exposure check: never tracked (`git log --all -- backend/.env` empty), only
   `.env.example` is tracked.
 

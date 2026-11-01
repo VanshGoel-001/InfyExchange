@@ -7,16 +7,16 @@ controls are marked **DEPLOY** and exist only as runbook procedures.
 
 ## 1. Network
 
-### 1.1 Container network isolation — `docker-compose.prod.yml`
+### 1.1 Container network isolation — `backend/docker-compose.yml` (`prod` profile)
 
 - `internal` network (`internal: true`) hosts `postgres` + `api`; it has **no route to the host**.
 - `edge` network hosts `api` + `web`. Only `web` publishes a port (`80:80`).
-- PostgreSQL publishes **no port** (previous dev compose still publishes 5432 — see §8).
+- PostgreSQL (prod) publishes **no port**; the `dev` profile's `postgres-dev` publishes 5432 — see §8.
 - Outbound egress remains open for the `api` container (Cloudinary uploads). Restricting it is
   a **DEPLOY** decision (OCI NSG egress rules per destination: `api.cloudinary.com`,
   `res.cloudinary.com`).
 
-### 1.2 Edge rate limiting — `nginx.conf`
+### 1.2 Edge rate limiting — `backend/nginx.conf`
 
 ```nginx
 limit_req_zone $binary_remote_addr zone=api_rl:10m rate=20r/s;
@@ -52,23 +52,23 @@ port 80/443; host UFW mirroring the NSG. Procedure: runbook §3. Not configurabl
 `RequestContextMiddleware` assigns `X-Request-ID` (sanitized client value or UUID4) and binds it
 to log records via `ContextVar`; nginx forwards its own `$request_id`.
 
-### 2.2 SPA headers — `nginx.conf`
+### 2.2 API gateway headers — `backend/nginx.conf`
 
-Adds the same headers at the edge plus:
+The gateway now fronts **only the API** (the SPA is hosted on Cloudflare Pages / Vercel).
+`backend/nginx.conf` adds the same headers at the edge plus:
 
-- `Content-Security-Policy-Report-Only` with the verified allowlist:
-  `script-src 'self'`, `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`
-  (inline style attributes are used by React components), `font-src 'self' data:
-  https://fonts.gstatic.com`, `img-src 'self' data: https://res.cloudinary.com`,
-  `connect-src 'self'`, `frame-ancestors 'none'`.
+- `Content-Security-Policy-Report-Only` scoped to the API origin (`default-src 'self'`;
+  `img-src 'self' data: https://res.cloudinary.com`; `frame-ancestors 'none'`). The **SPA's**
+  HTML-facing CSP — inline-style/fonts allowlist, `connect-src` to the API origin — is the
+  static host's responsibility (a `_headers` file on Cloudflare Pages, `headers` in `vercel.json`).
 - `server_tokens off`.
-- `location ~ /\.` denies dotfiles; `location ^~ /.well-known/` is allowed for ACME.
+- `location ~ /\.` denies dotfiles.
 - HSTS is commented out by design (enable per runbook §5 after HTTPS verification).
 
-**Enforcement path for CSP:** run report-only in production for at least one release cycle,
-confirm zero legitimate violations in browser consoles, then rename the header to
-`Content-Security-Policy`. If the SPA is hosted on Cloudflare Pages and calls the API
-cross-origin, add the API origin to `connect-src` first.
+**Enforcement path for CSP:** run report-only for at least one release cycle, confirm zero
+legitimate violations, then rename the header to `Content-Security-Policy`. For the SPA this
+burn-in happens on the static host, where `connect-src` must list the API origin so the
+cross-origin calls pass CSP once enforced.
 
 ### 2.3 HSTS gate
 
@@ -157,7 +157,7 @@ settings-driven (`RATE_LIMIT_*`, default 60 s window):
 
 ## 8. Dev Compose Warning — `backend/docker-compose.yml`
 
-The **development** compose still publishes `5432:5432` with `postgres/postgres`. It is not used
+The **`dev` profile** (`postgres-dev`) publishes `5432:5432` with `postgres/postgres`. It is not used
 in production, but it is a foot-gun on shared networks: run it only on a trusted machine or
 change it to bind `127.0.0.1:5432:5432`. Not modified here to avoid breaking local workflows.
 
@@ -178,7 +178,7 @@ change it to bind `127.0.0.1:5432:5432`. Not modified here to avoid breaking loc
 
 - `backend/requirements.txt` pins exact versions (verified against the running environment:
   fastapi 0.142.2, sqlalchemy 2.1.2, pydantic 2.13.5, pyjwt 2.15.1, cloudinary 1.46.2, …).
-- `backend/requirements-dev.txt`: pytest 9.1.1, httpx 0.28.1, pytest-cov 7.1.0, bandit 1.9.4.
+- `backend/requirements.txt` also pins the dev/security toolchain: pytest 9.1.1, httpx 0.28.1, pytest-cov 7.1.0, bandit 1.9.4, pip-audit 2.10.1.
 - CI/scan commands (runbook §8): `pip-audit`, `bandit -r app`, `npm audit`,
   `gitleaks detect`, `trivy fs`.
 - Docker base images are floating tags (`python:3.12-slim`, `postgres:17-alpine`,
@@ -198,7 +198,7 @@ change it to bind `127.0.0.1:5432:5432`. Not modified here to avoid breaking loc
 | `backend/app/routers/{listings,needs,interests,admin}.py` | Rate limiter wiring |
 | `backend/app/schemas/auth.py` | Password strength validator; login password length cap |
 | `backend/Dockerfile` | `--limit-concurrency 200`, `--timeout-keep-alive 30` |
-| `nginx.conf` | CSP report-only, Permissions-Policy, rate/conn limits, timeouts, dotfile deny, `server_tokens off`, `X-Request-ID` pass-through |
-| `docker-compose.prod.yml` | Required secrets fail-fast, internal network, resource/pids limits, `no-new-privileges`, `cap_drop`, `read_only` + tmpfs for web, log rotation |
-| `backend/requirements.txt`, `backend/requirements-dev.txt` | Pinning; dev/test toolchain |
-| `backend/.env.example`, `.env.prod.example` | Documented security knobs |
+| `backend/nginx.conf` | CSP report-only, Permissions-Policy, rate/conn limits, timeouts, dotfile deny, `server_tokens off`, `X-Request-ID` pass-through |
+| `backend/docker-compose.yml` | Required secrets fail-fast, internal network, resource/pids limits, `no-new-privileges`, `cap_drop`, `read_only` + tmpfs for web, log rotation |
+| `backend/requirements.txt` | Pinning; runtime + dev/test/security toolchain (single manifest) |
+| `backend/.env.example` | Documented security knobs (single dev + prod template) |
