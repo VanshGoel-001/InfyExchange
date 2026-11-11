@@ -12,13 +12,13 @@ def apply_migrations() -> None:
         alembic_cfg = Config("alembic.ini")
         alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
         alembic_cfg.attributes["configure_logger"] = False
-        logger.info("database_migrations_starting")
+        logger.info("Database migrations starting")
         command.upgrade(alembic_cfg, "head")
-        logger.info("database_migrations_applied")
+        logger.info("Database migrations applied")
     except Exception:
         # Serving an un-migrated schema would fail on every request, so refuse
         # to start in production. Development stays lenient to allow hacking
         # without a reachable database.
-        logger.exception("database_migrations_failed")
+        logger.exception("Database migrations failed")
         if settings.environment.lower() == "production":
             raise
