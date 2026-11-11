@@ -52,3 +52,18 @@ jobs:
       # Gate on known vulnerabilities in the production dependency set.
       - name: Dependency vulnerability audit (pip-audit)
         run: python -m pip_audit -r requirements.txt --progress-spinner off
+
+  deployment-config:
+    name: Deployment configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production Compose configuration
+        working-directory: backend
+        run: docker compose --env-file .env.example --profile prod config -q
+      - name: Validate Nginx configuration
+        run: docker run --rm -v "$PWD/backend/nginx.conf:/etc/nginx/conf.d/default.conf:ro" nginx:alpine nginx -t
+      - name: Validate Caddy configuration
+        run: docker run --rm -e API_DOMAIN=api.example.com -v "$PWD/backend/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Validate backup script syntax
+        run: bash -n backend/scripts/backup-postgres.sh

@@ -10,8 +10,9 @@ No secret values are listed here. Items marked **UNKNOWN** must be discovered on
 | Asset | Version / image | Location | Exposure |
 |---|---|---|---|
 | Frontend SPA | React 19.3, Vite 8.3, react-router 7.18 (lockfile `package-lock.json`) | `src/` → `dist/` | Public static (Cloudflare Pages / Vercel `<FRONTEND_DOMAIN>`); not served by the backend nginx |
-| API | FastAPI 0.142.2, Uvicorn 0.54.0, Python 3.12-slim | `backend/` | Public via `web` → `/api/*` only |
-| Web tier | nginx:alpine | `backend/nginx.conf` | Public port 80 (host); API reverse proxy only (no SPA) |
+| API | FastAPI 0.142.2, Uvicorn 0.54.0, Python 3.12-slim | `backend/` | Private Docker network; exposed through Caddy → nginx → `/api/*` and `/health` |
+| TLS edge | caddy:2-alpine | `backend/Caddyfile`, `backend/docker-compose.yml` | Public ports 80/443; automatic HTTPS for `API_DOMAIN` |
+| Web tier | nginx:alpine | `backend/nginx.conf` | Private Docker network HTTP API reverse proxy only (no SPA) |
 | Database | PostgreSQL 17-alpine | compose volume `postgres_data` | Internal compose network only |
 | Media store | Cloudinary (`infyexchange/listings/...`) | external SaaS | Public URLs (listing images) |
 | Host | Oracle Cloud VM `<OCI_VM_SHAPE>`, `<OCI_REGION>`, OS `<OCI_VM_OS>` | OCI | **UNKNOWN** until discovered |
@@ -20,8 +21,11 @@ No secret values are listed here. Items marked **UNKNOWN** must be discovered on
 
 | Endpoint | Port | Reachable from | Notes |
 |---|---|---|---|
-| `<API_DOMAIN>` / `<FRONTEND_DOMAIN>` | 443 | Internet (via Cloudflare) | TLS at edge |
-| `<ORIGIN_IP>` | 80 | Should be Cloudflare ranges only | nginx; NET-004 verifies |
+| `<API_DOMAIN>` | 80/443 | Internet | Caddy HTTP challenge/redirect and HTTPS API gateway |
+| `<FRONTEND_DOMAIN>` | 443 | Internet | Cloudflare Pages static SPA |
+| `<ORIGIN_IP>` | 22 | `<ADMIN_IP>` only | SSH keys, no root login |
+| `caddy:80/443` | 80/443 | Host-published | Only public container ports |
+| `web:80` | 80 | compose `edge` network | Nginx HTTP gateway; not published |
 | `<ORIGIN_IP>` | `<ADMIN_SSH_PORT>` | `<ADMIN_IP>` only | SSH keys, no root login |
 | `api:8000` | 8000 | compose `edge` network | Not published to host |
 | `postgres:5432` | 5432 | compose `internal` network | Not published; `internal: true` |

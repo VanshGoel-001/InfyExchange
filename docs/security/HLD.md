@@ -11,9 +11,9 @@ verified from the repository are written as placeholders in angle brackets and a
 | Component | Discovered technology | Evidence |
 |---|---|---|
 | Frontend | React 19.3 + Vite 8.3 (single-page app), built to `dist/`; lockfile committed | `src/`, `vite.config.js`, `package.json`, `package-lock.json` |
-| Frontend hosting (target) | Cloudflare Pages / Vercel (`<FRONTEND_DOMAIN>` to confirm) | spec target; exact domain unknown |
-| Edge network | Cloudflare proxy/DNS for the API host (`<API_DOMAIN>` to confirm) | target architecture |
-| Web tier | `nginx:alpine` API gateway: proxies `/api/*` + `/health` (no SPA) | `backend/nginx.conf`, `backend/docker-compose.yml` |
+| Frontend hosting | Cloudflare Pages (`<FRONTEND_DOMAIN>` to confirm) | `.github/workflows/pages-deploy.yml`; exact domain unknown |
+| TLS edge | Caddy automatic HTTPS for `<API_DOMAIN>` | `backend/Caddyfile`, `backend/docker-compose.yml` |
+| Web tier | Private HTTP `nginx:alpine` API gateway: proxies `/api/*` + `/health` (no SPA) | `backend/nginx.conf`, `backend/docker-compose.yml` |
 | API | FastAPI 0.142.2 on Uvicorn 0.54.0, Python 3.12 image | `backend/Dockerfile`, `backend/requirements.txt` |
 | AuthN | JWT HS256 (PyJWT), 7-day access tokens, Argon2id password hashing (pwdlib) | `app/services/auth.py` |
 | Database | PostgreSQL 17 (alpine), no published port in prod compose | `backend/docker-compose.yml` |
@@ -25,33 +25,33 @@ verified from the repository are written as placeholders in angle brackets and a
 ### Request flow
 
 ```
-Browser ──HTTPS──► Cloudflare edge (DNS, TLS, DDoS)
-   │                    │
-   │                    ├──► Cloudflare Pages / Vercel (static SPA)
-   │                    └──► <API_DOMAIN> → Oracle VM → nginx :80
-   │                                               └─ /api/*, /health → api:8000 (FastAPI)
-   │                                                                  │
-   │                                                                  └─► postgres:5432
-   │                                                                      (internal network only)
+Browser ──HTTPS──► Cloudflare Pages (static SPA)
+  │
+  └──HTTPS──► <API_DOMAIN> → Oracle VM Caddy :443 (TLS)
+                          └─ HTTP → nginx:80 (private Docker network)
+                                   └─ /api/*, /health → api:8000
+                                                  └─► postgres:5432
+                                                     (internal network only)
 ```
 
 ### Container topology (`backend/docker-compose.yml`, `prod` profile)
 
 | Service | Published ports | Networks | Privileges |
 |---|---|---|---|
-| `web` (nginx API gateway) | `80` (only public port) | `edge` | `cap_drop: ALL` + 5 minimal caps, `read_only`, `no-new-privileges` |
+| `caddy` (TLS edge) | `80`, `443` (only published ports) | `edge` | `cap_drop: ALL` + `NET_BIND_SERVICE`, `read_only`, `no-new-privileges` |
+| `web` (nginx API gateway) | none | `edge` | `cap_drop: ALL` + 5 minimal caps, `read_only`, `no-new-privileges` |
 | `api` (uvicorn) | none | `edge`, `internal` | non-root `appuser`, `cap_drop: ALL`, `no-new-privileges` |
 | `postgres` | none | `internal` (`internal: true`) | `no-new-privileges` |
 
-No service other than `web` exposes a port to the host. PostgreSQL is unreachable from outside
-the compose project.
+No service other than `caddy` exposes ports to the host. PostgreSQL is unreachable from outside
+the compose project; Caddy obtains and renews the API certificate using the public hostname.
 
 ## 2. Trust Boundaries (as implemented)
 
 | ID | Boundary | Implemented controls | Deployment-side controls (verify) |
 |---|---|---|---|
 | TB-01 | Browser → Cloudflare | HTTPS enforced at edge; app sets `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy`, CSP (report-only on the API origin; SPA HTML headers set on the static host), HSTS (gated) | Cloudflare SSL mode Full (strict) recommended |
-| TB-02 | Cloudflare → origin | Origin port 80 is the only ingress; app rejects nothing by cloud IP today (not verifiable from repo) | Cloudflare IP allowlist on OCI NSG/UFW, Authenticated Origin Pulls — see runbook |
+| TB-02 | Internet → VM | Caddy owns public 80/443, terminates TLS, and proxies to private nginx; no Cloudflare-only source restriction is configured | Restrict ingress to Cloudflare IP ranges only if API DNS is proxied; otherwise allow public 80/443 for Caddy ACME |
 | TB-03 | nginx → API | API container has no published port; only `web` reaches `api:8000` over the `edge` network | — |
 | TB-04 | API → PostgreSQL | DB on `internal: true` network, no published port, single app role | `pg_hba.conf` review on host |
 | TB-05 | Admin → VM | SSH over key auth (confirm on host) | OCI NSG restricted to admin IP; UFW; no root login — see runbook |
@@ -59,14 +59,15 @@ the compose project.
 
 ## 3. Security Design Principles Applied
 
-- **Defense in depth:** headers at both nginx and FastAPI; rate limits at nginx (`limit_req`) and
-  in the app (`InMemoryRateLimiter`); network isolation plus DB auth.
+- **Defense in depth:** headers at nginx and FastAPI; application per-client rate limits via
+  `InMemoryRateLimiter`; network isolation plus DB auth. Nginx does not rate-limit by source IP
+  because it sees Caddy as its peer.
 - **Least privilege:** non-root API user, `cap_drop: ALL`, DB account is the app role only
   (never postgres superuser — confirm on host).
 - **Secure defaults:** production compose **fails fast** when `SECRET_KEY`,
   `POSTGRES_PASSWORD`, `CORS_ORIGINS`, or Cloudinary credentials are missing; no weak fallback
   password exists anymore.
-- **Deny-by-default network:** Postgres on internal network; only `web:80` is published.
+- **Deny-by-default network:** Postgres on the internal network; only Caddy's `80`/`443` are published.
 - **Fail-safe errors:** validation, SQLAlchemy, and unhandled exceptions return generic JSON
   without stack traces or SQL details (`app/main.py` handlers).
 - **Auditability:** admin mutations write to `audit_logs` (actor, action, target, IP, details);

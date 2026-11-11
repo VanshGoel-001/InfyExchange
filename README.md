@@ -1,98 +1,119 @@
 # InfyExchange
 
-A campus marketplace for the Infosys Mysore trainee community: **buy, rent, lend and give away** items within campus, plus a "needs" board where trainees post what they are looking for and others offer items via interests. An accepted interest unlocks a contact exchange, and an admin control plane provides moderation, user management and an audit trail.
+InfyExchange is a marketplace for the Infosys Mysore trainee community. Members can list items to sell, rent, lend, or give away; post requests; and contact each other after an offer is accepted. Administrators can moderate listings and manage users.
 
-Two independently deployed applications:
+## Architecture
 
-| Layer | Tech | Deployed to |
-|---|---|---|
-| Frontend | React 19 + Vite 8 SPA (`react-router-dom`, `lucide-react`) | Vercel / Cloudflare Pages |
-| Backend | FastAPI + SQLAlchemy 2 + Pydantic v2 + Alembic · Postgres 17 · Cloudinary · JWT (HS256) + Argon2id · nginx API gateway | Oracle VM (or any single host) |
+The frontend and backend are deployed separately.
 
-The **`backend/` folder is a self-contained deploy unit** (`Dockerfile`, `docker-compose.yml`, `nginx.conf`, `.env.example`). Full architecture, threat model and runbook live in `docs/security/`.
+| Component | Stack | Hosting |
+| --- | --- | --- |
+| Web app | React, Vite | Cloudflare Pages |
+| API | FastAPI, SQLAlchemy, Alembic | Oracle Cloud VM or another Linux host |
+| Database | PostgreSQL 17 | Docker Compose, private network |
+| Images | Cloudinary | Cloudinary |
 
-## Prerequisites
+The VM runs Caddy for HTTPS, Nginx as a private API proxy, the API, and PostgreSQL. Only Caddy publishes ports 80 and 443. See [the security docs](docs/security/) for architecture and operational details.
 
-- **Node.js 20+** (frontend) · **Python 3.12** (backend, matches `backend/Dockerfile`) · **Docker** (dev Postgres + ZAP scan)
+## Requirements
 
-## Development
+- Node.js 20 or later
+- Python 3.12
+- Docker with Compose
+
+## Run Locally
+
+Start PostgreSQL from `backend/`:
 
 ```powershell
-# 1. Database — dev Postgres on localhost:5432 (infyexchange/postgres/postgres)
 cd backend
 docker compose --profile dev up -d
-
-# 2. Backend API — http://127.0.0.1:8000 (Swagger at /docs, non-prod only)
-copy .env.example .env          # then set SECRET_KEY + the three CLOUDINARY_* values
-python -m venv .venv ; .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-
-# 3. Frontend — http://127.0.0.1:5173 (Vite proxies /api to :8000, so no CORS/base-URL needed)
-cd .. ; npm install ; npm run dev
 ```
 
-The app applies pending **Alembic migrations** on startup (fail-fast in production) and exposes `GET /health`. To add migrations after model changes, use `python -m alembic revision --autogenerate -m "..."` then `python -m alembic upgrade head`.
+In a second terminal, configure and start the API:
+
+```powershell
+cd backend
+Copy-Item .env.example .env
+# Set SECRET_KEY and the CLOUDINARY_* values in .env.
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+In a third terminal, start the frontend from the repository root:
+
+```powershell
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. Vite forwards `/api` requests to the local API. The API applies pending database migrations at startup and exposes `/health`; interactive API docs are available at `/docs` in development.
 
 ## Configuration
 
-All backend settings live in `backend/.env`; the single annotated template for **both dev and prod** is **`backend/.env.example`**. Only these have **no default** and must be set: `SECRET_KEY`, `DATABASE_URL`, and `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET`. Everything else (mode, JWT TTL, CORS, rate limits, image caps, pooling, HSTS) is optional with a sane default — see the template for the full list. The frontend needs just `VITE_API_BASE_URL` (template: root **`.env.example`**; set it in the static host's dashboard, never in git). It is inlined at build time, so changing it means redeploying, and it must carry the gateway's `/api` path — the production build rejects a malformed value instead of shipping an SPA that 404s. Unset in dev because Vite proxies `/api`.
+Use [backend/.env.example](backend/.env.example) as the backend template. For local API runs, set `SECRET_KEY`, `DATABASE_URL`, and the three `CLOUDINARY_*` values.
 
-## Production deployment
+Production Compose requires `SECRET_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `API_DOMAIN`, `CORS_ORIGINS`, and the three `CLOUDINARY_*` values. Compose builds the database URL from the `POSTGRES_*` settings. Use a real DNS name for `API_DOMAIN`, point it to the VM, and set `CORS_ORIGINS` to the exact Cloudflare Pages origin.
 
-Two deployments you connect by URL.
+Set `VITE_API_BASE_URL` in the Cloudflare Pages project settings to the API origin plus `/api`, for example `https://api.example.com/api`. Vite embeds this value during the build, so changing it requires a new deployment. Local development uses Vite's proxy and does not need this setting.
 
-**Backend** (on the VM — `docker-compose.yml` `prod` profile runs `postgres` + `api` + an nginx **API gateway**):
+## Deploy
+
+On the VM, create `backend/.env` from the example, enter the production values, then run:
 
 ```bash
 cd backend
-cp .env.example .env                       # set every CHANGE_ME; chmod 600 .env
-docker compose --profile prod up -d --build   # only nginx publishes :80 (443 after TLS)
+docker compose --profile prod up -d --build
 ```
 
-Postgres and the API sit on internal networks with **no published ports**; secrets fail fast on missing `${VAR:?}`; containers run with `cap_drop: ALL`, `read_only` nginx, resource/pids limits and `no-new-privileges`.
+Caddy obtains and renews the TLS certificate for `API_DOMAIN`. Ports 80 and 443 must be reachable from the internet. PostgreSQL, the API, and Nginx are not published to the host.
 
-**Frontend** — build the static SPA and deploy `dist/` to Vercel / Cloudflare Pages, setting `VITE_API_BASE_URL` to the API origin **plus the `/api` path** (e.g. `https://<API_DOMAIN>/api`):
+Cloudflare Pages deployment runs from GitHub Actions after CI succeeds on a push to `main`. Configure these repository values:
 
-```bash
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Variable | Cloudflare account identifier |
+| `CLOUDFLARE_PAGES_PROJECT` | Variable | Pages project name |
+| `VITE_API_BASE_URL` | Variable | API URL ending in `/api` |
+| `CLOUDFLARE_API_TOKEN` | Secret | Token with permission to deploy Pages |
+
+## Verify
+
+Run the frontend checks from the repository root:
+
+```powershell
+npm ci
+npm audit --audit-level=high
 npm run build
 ```
 
-**To connect them:** set the backend's `CORS_ORIGINS` to the exact frontend origin and the frontend's `VITE_API_BASE_URL` to the API origin plus `/api` — the origins must match or the browser blocks the calls. The SPA's own HTML-facing headers (CSP for the origin that holds the token) are **generated into `dist/_headers`** by `vite.config.js` from that same variable — Cloudflare Pages and Vercel both read the file from the output dir, so there is nothing to hand-maintain and no placeholder to forget; flip `CSP_ENFORCE` once the report-only burn-in is clean. Client-side routes need the `public/_redirects` fallback, which Vite copies into `dist/`. Enable `HSTS_ENABLED` only after HTTPS is verified. Step-by-step: `docs/security/SECURITY_RUNBOOK.md`.
-
-## API & domain model
-
-The REST API is namespaced under `/api` (`auth`, `users`, `listings`, `needs`, `interests`, `admin`) plus `GET /health`. Authenticated routes take `Authorization: Bearer <jwt>`; admin routes also require `is_admin`. **Exact endpoints are defined by the OpenAPI spec (`/docs` in a non-production environment) and `backend/app/routers/`** — not mirrored here. Domain facts (roles `SE/DSE/SP_L1/SP_L2`; listing types `SELL/RENT/LEND/GIVEAWAY` with price forced to `0` for lend/giveaway; statuses; interest lifecycle; expiry/cleanup; settings-driven rate limits) live in `backend/app/models`, `schemas/` and `config.py`.
-
-Notable behaviours: an accepted interest reveals the counterparty's contact through a gated endpoint (`403` before acceptance, `200` for participants); duplicate submissions inside `DUPLICATE_SUBMISSION_WINDOW_SECONDS` return the existing record; a failed image upload rolls back the DB row and deletes any Cloudinary objects; admin/security actions write to an audit log; contact details are the only thing gated behind acceptance.
-
-## Testing
+Run the backend checks from `backend/`:
 
 ```powershell
-cd backend
-python -m pytest              # security suite (SQLite isolation, no external services)
-python -m bandit -r app       # static analysis
+python -m pytest -q
+python -m bandit -r app -q
+python -m pip_audit -r requirements.txt --progress-spinner off
 ```
 
-DAST runs against a live target via ZAP in Docker: `scripts/security/zap-api-scan.ps1` (needs a non-production `ENVIRONMENT`; reports land in `zap-reports/`). CI (`.github/workflows/ci.yml`) runs the frontend build + `npm audit` and the backend tests + `bandit` + `pip-audit`.
+GitHub Actions runs these checks and validates the Compose, Nginx, Caddy, and backup configurations. For a live API security scan, see [the ZAP scan script](scripts/security/zap-api-scan.ps1).
 
-## Conventions
+## Operations
 
-- **No hard-coded rules:** every policy lives in backend config/schemas; the client never duplicates validation logic or mocks API payloads. Forms declare constraints as HTML attributes and use the browser Constraint Validation API.
-- **Fail loudly:** missing required secrets and failed production migrations surface immediately — no silent weak defaults.
-- **Known trade-offs:** JWT in `localStorage` (cookie strategy pending); the rate limiter is per-process in-memory (needs Redis to scale horizontally).
-- Account management (edit profile / change password / delete account) has **no backend API yet**, so those controls are intentionally absent — not placeholders.
+- Create encrypted PostgreSQL backups with [the backup script](backend/scripts/backup-postgres.sh). Setup and restore instructions are in [the security runbook](docs/security/SECURITY_RUNBOOK.md).
+- JWTs are stored in browser `localStorage`.
+- Rate limits are held in API process memory; multiple API instances would need a shared store such as Redis.
+- Profile editing, password changes, and account deletion are not currently supported by the API.
 
-## Repository layout
+## Project Structure
 
-```
-src/                    React SPA — app/App.jsx (routes + <Protected>), components/, context/AuthContext, pages/, services/api.js, utils/filters.js
-backend/                FastAPI app (deploy unit)
-  app/                  routers · schemas · models · services · utils · middleware · config · database · dependencies · main
-  alembic/              Migrations          tests/  pytest security suite
-  docker-compose.yml    profiles: dev (postgres) | prod (postgres + api + web)
-  Dockerfile  nginx.conf  .env.example      requirements.txt (runtime + dev/security)
-docs/security/          HLD · LLD · THREAT_MODEL · TEST_PLAN · SECURITY_RUNBOOK · ASSET_INVENTORY · ACCEPTANCE_CRITERIA
-scripts/security/       zap-api-scan.ps1 · openapi_diff.py
-vite.config.js          Dev proxy /api → http://127.0.0.1:8000
+```text
+src/                  React application
+backend/app/           FastAPI routes, models, schemas, and services
+backend/alembic/       Database migrations
+backend/tests/         Backend tests
+backend/docker-compose.yml  Local and production services
+docs/security/         Architecture and operational documentation
+scripts/security/      Security scan and OpenAPI tools
 ```

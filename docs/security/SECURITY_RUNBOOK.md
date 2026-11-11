@@ -117,18 +117,21 @@ MaxAuthTries 4
 
 ## 7. Backups and restore (RPO 24 h / RTO 2 h baseline)
 
-Create (daily cron on the VM):
+Install `age` and `rclone` on the VM, configure a dedicated rclone remote (for example,
+Cloudflare R2), and store its credential file with permissions restricted to the backup
+operator. Copy `backend/backup.env.example` to `/etc/infyexchange-backup.env`, set the
+age public recipient and remote path, and protect the file. The age private key must
+remain off the VM. The script uploads only encrypted output and also retains encrypted
+local copies according to `BACKUP_RETENTION_DAYS`.
+
+Run nightly from cron on the VM:
 
 ```bash
-cd /opt/infyexchange/backend   # compose project path
-docker compose --profile prod exec -T postgres \
-  pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" > /var/backups/infy_$(date +%F).dump
-age -r <BACKUP_PUBKEY> -o /var/backups/infy_$(date +%F).dump.age /var/backups/infy_$(date +%F).dump
-rm /var/backups/infy_$(date +%F).dump
+15 2 * * * cd /opt/infyexchange/backend && set -a && . /etc/infyexchange-backup.env && set +a && ./scripts/backup-postgres.sh >> /var/log/infyexchange-backup.log 2>&1
 ```
 
-- Store `.age` files off-host (OCI Object Storage free tier or an admin workstation). The private
-  key stays **off the VM**.
+- The script fails if the database dump, encryption, or off-host upload fails. Confirm the
+   cron exit status and periodically test an actual restore.
 - Monthly restore test into a scratch container:
 
 ```bash
@@ -143,7 +146,7 @@ Record outcome (REC-001…003). A backup never restored is not a recovery mechan
 
 ## 8. Deploy, verify, rollback (change management)
 
-Pre-deploy: `git status` clean; `docker compose --profile prod config -q` (in `backend/`) passes;
+Pre-deploy: `git status` clean; `docker compose --env-file .env --profile prod config -q` (in `backend/`) passes;
 `pytest` green; `bandit` clean.
 
 Deploy:
@@ -152,13 +155,14 @@ Deploy:
 cd backend                        # the backend deploy unit (compose + Dockerfile + nginx.conf)
 docker compose --profile prod up -d --build
 docker compose --profile prod ps
-curl -fsS http://127.0.0.1/health || echo "API unhealthy"
+curl -fsS "https://${API_DOMAIN}/health" || echo "API unhealthy"
 ```
 
-The frontend is built and deployed separately to Cloudflare Pages / Vercel; `npm run build` is no
-longer part of this backend deploy. Set `VITE_API_BASE_URL` to this API origin **plus the `/api`
-path** on that host (the gateway proxies `/api/` and `/health` only; `vite.config.js` rejects a
-base without the suffix at build time).
+Only Caddy publishes ports 80/443. `API_DOMAIN` must resolve to the VM and inbound 80/443 must be
+reachable for automatic certificate issuance and renewal. The frontend is built and deployed to
+Cloudflare Pages by GitHub Actions after successful CI on `main`; set repository variable
+`VITE_API_BASE_URL` to this API origin **plus `/api`** (the gateway proxies `/api/` and `/health`
+only; `vite.config.js` rejects a base without the suffix at build time).
 
 Post-deploy smoke: login with a synthetic account → 200; `PUT` another user's listing → 403;
 `curl -sI /api/...` shows the security headers; `docker compose logs api | grep service_started`.
@@ -172,7 +176,7 @@ Rollback per change of this iteration:
 |---|---|
 | App middleware/headers/limits | `git revert <commit>` of backend changes; rebuild api (`up -d --build api`). No DB migration involved. |
 | Compose hardening | Restore previous `backend/docker-compose.yml` from git; `docker compose --profile prod up -d`. Networks are recreated; data volume untouched. If a container fails to start due to `cap_drop`/`read_only`, remove those two keys for that service. |
-| nginx hardening | Restore previous `backend/nginx.conf`; `docker compose --profile prod restart web`. The gateway CSP is report-only by default; the SPA's HTML CSP lives on the static host. |
+| Caddy/Nginx edge | Restore the previous Compose and Nginx files, then `docker compose --profile prod up -d`. Caddy certificate state is stored in named volumes and is not removed by this rollback. |
 | Pinned requirements | Restore previous `requirements.txt`; rebuild api. |
 | Env template changes | `.env` untouched by this iteration except new optional keys (`HSTS_ENABLED`, `ALLOWED_HOSTS`) with safe defaults. |
 

@@ -3,17 +3,17 @@
 # The frontend is a static SPA deployed separately (Vercel / Cloudflare Pages) and
 # is NOT part of this stack. This file is the self-contained deployable unit for the
 # Oracle VM (or any single host): run it with the "prod" profile to bring up
-# Postgres + API + an nginx reverse proxy that fronts only the API.
+# Postgres + API + an HTTP-only nginx API gateway + Caddy for public HTTPS.
 #
 # Required prod secrets (place them in a `.env` next to this file, or export them —
 # see backend/.env.example): SECRET_KEY, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
-# CORS_ORIGINS, CLOUDINARY_*. `${VAR:?}` makes the stack fail fast instead of booting
-# with weak defaults.
+# API_DOMAIN, CORS_ORIGINS, CLOUDINARY_*. `${VAR:?}` makes the stack fail fast instead
+# of booting with weak defaults.
 #
 # Commands:
 #   dev  (local Postgres for a host-run `uvicorn --reload`):
 #       docker compose --profile dev up -d
-#   prod (full backend behind the reverse proxy):
+#   prod (full backend behind Caddy):
 #       docker compose --profile prod up -d --build
 services:
   # ---- Development: Postgres published to the host for a locally-run API ----
@@ -108,17 +108,12 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # API gateway: the only public surface. Reverse-proxies /api and /health to the
-  # backend; it does NOT serve the SPA (that is hosted on a static provider now).
+  # Private HTTP gateway; Caddy is the only service published to the host.
   web:
     image: nginx:alpine
     container_name: infyexchange-web
     profiles: ["prod"]
     restart: unless-stopped
-    ports:
-      - "80:80"
-      # Publish 443 after installing TLS certs for this host:
-      # - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
@@ -151,6 +146,46 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Public edge: obtains and renews the API host's TLS certificate automatically.
+  caddy:
+    image: caddy:2-alpine
+    container_name: infyexchange-caddy
+    profiles: ["prod"]
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN must be a DNS name pointing to this host}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      - web
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+          pids: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   edge:
   # Host-isolated network: postgres is unreachable from outside the compose stack
@@ -160,3 +195,5 @@ networks:
 volumes:
   postgres_dev_data:
   postgres_data:
+  caddy_data:
+  caddy_config:
