@@ -1,0 +1,7 @@
+# SPA fallback. src/app/App.jsx mounts a BrowserRouter, so routes like /listings/12
+# or /admin exist only inside the client router — a static host has no such file and
+# answers 404 before React can render (and NotFoundPage never gets the chance).
+# Status 200 rather than 301/302 keeps the address bar intact so React Router can
+# resolve the path. Real files take precedence over this rule, so /assets/* and the
+# generated _headers are unaffected.
+/*    /index.html    200

@@ -36,7 +36,7 @@ The app applies pending **Alembic migrations** on startup (fail-fast in producti
 
 ## Configuration
 
-All backend settings live in `backend/.env`; the single annotated template for **both dev and prod** is **`backend/.env.example`**. Only these have **no default** and must be set: `SECRET_KEY`, `DATABASE_URL`, and `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET`. Everything else (mode, JWT TTL, CORS, rate limits, image caps, pooling, HSTS) is optional with a sane default — see the template for the full list. The frontend needs just `VITE_API_BASE_URL` (inlined at build time; unset in dev because Vite proxies `/api`).
+All backend settings live in `backend/.env`; the single annotated template for **both dev and prod** is **`backend/.env.example`**. Only these have **no default** and must be set: `SECRET_KEY`, `DATABASE_URL`, and `CLOUDINARY_CLOUD_NAME` / `_API_KEY` / `_API_SECRET`. Everything else (mode, JWT TTL, CORS, rate limits, image caps, pooling, HSTS) is optional with a sane default — see the template for the full list. The frontend needs just `VITE_API_BASE_URL` (template: root **`.env.example`**; set it in the static host's dashboard, never in git). It is inlined at build time, so changing it means redeploying, and it must carry the gateway's `/api` path — the production build rejects a malformed value instead of shipping an SPA that 404s. Unset in dev because Vite proxies `/api`.
 
 ## Production deployment
 
@@ -52,13 +52,13 @@ docker compose --profile prod up -d --build   # only nginx publishes :80 (443 af
 
 Postgres and the API sit on internal networks with **no published ports**; secrets fail fast on missing `${VAR:?}`; containers run with `cap_drop: ALL`, `read_only` nginx, resource/pids limits and `no-new-privileges`.
 
-**Frontend** — build the static SPA and deploy `dist/` to Vercel / Cloudflare Pages, setting `VITE_API_BASE_URL` to the backend origin:
+**Frontend** — build the static SPA and deploy `dist/` to Vercel / Cloudflare Pages, setting `VITE_API_BASE_URL` to the API origin **plus the `/api` path** (e.g. `https://<API_DOMAIN>/api`):
 
 ```bash
 npm run build
 ```
 
-**To connect them:** set the backend's `CORS_ORIGINS` to the exact frontend origin and the frontend's `VITE_API_BASE_URL` to the backend origin — they must match or the browser blocks the calls. Set HTML-facing headers (CSP) on the static host (`_headers` for Pages, `headers` in `vercel.json`); enable `HSTS_ENABLED` only after HTTPS is verified. Step-by-step: `docs/security/SECURITY_RUNBOOK.md`.
+**To connect them:** set the backend's `CORS_ORIGINS` to the exact frontend origin and the frontend's `VITE_API_BASE_URL` to the API origin plus `/api` — the origins must match or the browser blocks the calls. The SPA's own HTML-facing headers (CSP for the origin that holds the token) are **generated into `dist/_headers`** by `vite.config.js` from that same variable — Cloudflare Pages and Vercel both read the file from the output dir, so there is nothing to hand-maintain and no placeholder to forget; flip `CSP_ENFORCE` once the report-only burn-in is clean. Client-side routes need the `public/_redirects` fallback, which Vite copies into `dist/`. Enable `HSTS_ENABLED` only after HTTPS is verified. Step-by-step: `docs/security/SECURITY_RUNBOOK.md`.
 
 ## API & domain model
 

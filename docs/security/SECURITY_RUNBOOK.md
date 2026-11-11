@@ -88,9 +88,14 @@ MaxAuthTries 4
    HTTPS").
 2. If the origin needs TLS (Cloudflare Full strict): install a Cloudflare Origin CA certificate
    on nginx (mount it via a volume and publish `443`), `listen 443` with it, and redirect 80→443.
-3. Burn-in CSP: keep `Content-Security-Policy-Report-Only`, then rename the header to
-   `Content-Security-Policy` and redeploy. The SPA's HTML CSP is burned in on the static host
-   (Cloudflare Pages `_headers` / `vercel.json`), not in `backend/nginx.conf` (API origin only).
+3. Burn-in CSP: keep `Content-Security-Policy-Report-Only`, then enforce and redeploy — on the
+   gateway by editing `backend/nginx.conf`, on the SPA by flipping `CSP_ENFORCE` in
+   `vite.config.js`, which regenerates `dist/_headers` at build time with `connect-src` derived
+   from `VITE_API_BASE_URL`. The SPA document is governed only by those static-host headers:
+   `backend/nginx.conf` protects the API origin and cannot reach the page holding the JWT.
+   Watch the browser console for report-only violations before enforcing, and add a rule only if
+   a violation proves it is needed — `style-src` deliberately omits `'unsafe-inline'` because
+   React assigns styles through the CSSOM and the build emits no inline `<style>`.
 4. Enable HSTS gradually: set `HSTS_ENABLED=true` with `HSTS_MAX_AGE=300`, deploy, verify no
    breakage; raise to 86400 → 604800 → 15552000. Leave `HSTS_INCLUDE_SUBDOMAINS=false` until
    every subdomain is HTTPS.
@@ -151,10 +156,15 @@ curl -fsS http://127.0.0.1/health || echo "API unhealthy"
 ```
 
 The frontend is built and deployed separately to Cloudflare Pages / Vercel; `npm run build` is no
-longer part of this backend deploy. Set `VITE_API_BASE_URL` to this API origin on that host.
+longer part of this backend deploy. Set `VITE_API_BASE_URL` to this API origin **plus the `/api`
+path** on that host (the gateway proxies `/api/` and `/health` only; `vite.config.js` rejects a
+base without the suffix at build time).
 
 Post-deploy smoke: login with a synthetic account → 200; `PUT` another user's listing → 403;
 `curl -sI /api/...` shows the security headers; `docker compose logs api | grep service_started`.
+On the frontend origin, `curl -sI https://<FRONTEND_DOMAIN>/` must show the CSP header, and
+`curl -sI https://<FRONTEND_DOMAIN>/listings` must return 200 with `index.html` — a 404 there
+means `dist/_redirects` did not ship and every deep link is broken for real users.
 
 Rollback per change of this iteration:
 
