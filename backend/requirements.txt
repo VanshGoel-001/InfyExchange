@@ -24,6 +24,7 @@ python-dotenv==1.2.4
 # ---- Development & security tooling ----
 # CI installs and runs these from this file. The production image also
 # installs them (Dockerfile uses requirements.txt), so keep this list lean.
+setuptools==84.2.1
 pytest==9.1.1
 httpx==0.28.1
 pytest-cov==7.1.0

@@ -61,7 +61,7 @@ Set `VITE_API_BASE_URL` in the Cloudflare Pages project settings to the API orig
 
 ## Deploy
 
-Cloud Run deployment runs from GitHub Actions after CI succeeds on a push to `deploy/neon-cloudrun-cloudflare-pages`. Configure Workload Identity Federation between GitHub and Google Cloud, grant the deploy service account permission to deploy Cloud Run services and act as the runtime service account, and grant the runtime service account access to all six secrets listed above. Configure these repository values:
+The `deploy/neon-cloudrun-cloudflare-pages` branch runs CI before sequential Cloud Run and Cloudflare Pages deployments. The release image is scanned and deployed by digest. Configure Workload Identity Federation and the `neon-staging` GitHub environment; grant the deploy account least-privilege Artifact Registry and Cloud Run permissions, and grant the runtime account access to the six secrets listed above. Configure these repository or environment values:
 
 | Name | Type | Purpose |
 | --- | --- | --- |
@@ -72,12 +72,13 @@ Cloud Run deployment runs from GitHub Actions after CI succeeds on a push to `de
 | `GCP_PROJECT_ID` | Variable | Google Cloud project ID |
 | `GCP_REGION` | Variable | Cloud Run region |
 | `CLOUD_RUN_SERVICE` | Variable | Cloud Run service name |
+| `ARTIFACT_REGISTRY_REPOSITORY` | Variable | Pre-created Docker repository in Artifact Registry |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Variable | Full Workload Identity Provider resource name |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | Variable | GitHub deployment service account email |
 | `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | Variable | Cloud Run runtime service account email |
 | `CORS_ORIGINS` | Variable | Exact Pages origin allowed by the API |
 
-Create the Cloud Run service once and note its HTTPS URL. Set `VITE_API_BASE_URL` to that URL plus `/api` before the next deployment. After that, GitHub Actions deploys the API first and the matching Cloudflare Pages branch second, following successful CI on `deploy/neon-cloudrun-cloudflare-pages`.
+Create the Cloud Run service and Artifact Registry repository once. Set `VITE_API_BASE_URL` to the service URL plus `/api`. Configure reviewer approval and branch restrictions on `neon-staging`; see [the operations runbook](docs/security/SECURITY_RUNBOOK.md).
 ## Verify
 
 Run the frontend checks from the repository root:
@@ -96,7 +97,7 @@ python -m bandit -r app -q
 python -m pip_audit -r requirements.txt --progress-spinner off
 ```
 
-GitHub Actions runs these checks and builds the Cloud Run container. For a live API security scan, see [the ZAP scan script](scripts/security/zap-api-scan.ps1).
+GitHub Actions runs tests, SAST, dependency and secret scans, configuration checks, and container vulnerability scanning. The controls and remaining administrator actions are listed in [the DevSecOps pipeline checklist](docs/security/DEVSECOPS_PIPELINE.md). For a live API security scan, see [the ZAP scan script](scripts/security/zap-api-scan.ps1).
 
 ## Operations
 

@@ -6,9 +6,9 @@ This runbook covers the production deployment on Cloudflare Pages, Google Cloud 
 
 ### Google Cloud
 
-Enable Cloud Run, Cloud Build, Artifact Registry, Secret Manager, and IAM APIs. Configure Workload Identity Federation for this repository and the `main` branch; do not create a long-lived service-account key for GitHub Actions.
+Enable Cloud Run, Artifact Registry, Secret Manager, IAM Credentials, and Security Token Service APIs. Create a Docker Artifact Registry repository before deployment. Configure Workload Identity Federation for this repository and only the `deploy/neon-cloudrun-cloudflare-pages` branch; do not create a long-lived service-account key for GitHub Actions.
 
-Set these repository variables for the `Deploy Cloud Run` workflow:
+Set these repository or `neon-staging` environment variables for the CI deployment workflow:
 
 | Variable | Value |
 | --- | --- |
@@ -18,15 +18,26 @@ Set these repository variables for the `Deploy Cloud Run` workflow:
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full workload identity provider resource name |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | CI deployer service-account email |
 | `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | Runtime service-account email |
+| `ARTIFACT_REGISTRY_REPOSITORY` | Pre-created Docker repository name |
 | `CORS_ORIGINS` | Exact Cloudflare Pages origin |
 
-Grant the deployer permission to deploy Cloud Run services, build and publish the source image, and impersonate the runtime service account. Grant the runtime account `Secret Manager Secret Accessor` on the required secrets.
+Restrict the WIF provider condition to the exact GitHub repository and deployment branch. Grant the deployer only Artifact Registry Writer, Cloud Run deployment, and runtime service-account impersonation permissions. Grant the runtime account Secret Manager access only to the six required secrets. Set the GitHub `neon-staging` environment to require reviewer approval and allow deployments only from the dedicated branch.
+
+Create the Artifact Registry repository once:
+
+```bash
+gcloud artifacts repositories create "$ARTIFACT_REGISTRY_REPOSITORY" \
+	--repository-format=docker \
+	--location="$GCP_REGION" \
+	--project="$GCP_PROJECT_ID"
+```
 
 Create these Secret Manager secrets:
 
 | Secret | Value |
 | --- | --- |
-| `NEON_DATABASE_URL` | Neon connection URL using `postgresql+psycopg://` and TLS (`sslmode=require`) |
+| `NEON_DATABASE_URL` | Pooled Neon URL using `postgresql+psycopg://` and TLS (`sslmode=require`) |
+| `NEON_DATABASE_URL_UNPOOLED` | Direct Neon URL for Alembic migrations |
 | `SECRET_KEY` | Random JWT signing key, at least 32 random bytes |
 | `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
 | `CLOUDINARY_API_KEY` | Cloudinary API key |
@@ -49,11 +60,11 @@ Set these repository values for the `Deploy Cloudflare Pages` workflow:
 | `VITE_API_BASE_URL` | Variable | Cloud Run service URL ending in `/api` |
 | `CLOUDFLARE_API_TOKEN` | Secret | Token scoped to deploy the Pages project |
 
-The API workflow completes before the Pages workflow starts. On the first deployment, deploy the API, copy its HTTPS service URL from Cloud Run, set `VITE_API_BASE_URL`, and rerun the Pages deployment if its first attempt ran before the variable was set.
+The CI workflow runs checks first, then deploys Cloud Run, waits for its health check, and deploys the matching Cloudflare Pages branch. On the first deployment, set `VITE_API_BASE_URL` to the Cloud Run service URL ending in `/api` before pushing the deployment branch.
 
 ## Deploy and verify
 
-A push to `main` runs CI, deploys the API, then deploys the frontend. The API workflow applies pending Alembic migrations during startup. PostgreSQL advisory locking serializes migrations when Cloud Run starts multiple instances or revisions concurrently.
+A push to `deploy/neon-cloudrun-cloudflare-pages` runs CI, then the Cloud Run and Pages deployments. CI builds the container once for release, attaches BuildKit provenance and SBOM metadata, scans it for high/critical vulnerabilities, retains a CycloneDX SBOM, and deploys the same image by digest. Startup applies pending Alembic migrations using the direct URL. PostgreSQL advisory locking serializes migrations when Cloud Run starts multiple instances or revisions concurrently. The `main` branch remains on its separate Oracle/Cloudflare deployment strategy.
 
 Check the service and health endpoint:
 
@@ -70,7 +81,7 @@ Cloud Run writes application logs to Cloud Logging. Review request IDs and `secu
 
 ## Rollback
 
-Cloud Run keeps prior revisions. Route traffic back to the last known-good revision with `gcloud run services update-traffic`. Revert the source change and push to `main` to redeploy. Before rolling back a database migration, confirm that the previous application revision is compatible with the current schema; destructive schema changes require a separate recovery plan.
+Cloud Run keeps prior revisions. Route traffic back to the last known-good revision with `gcloud run services update-traffic`. Revert the source change and push to the Neon deployment branch to redeploy. Before rolling back a database migration, confirm that the previous application revision is compatible with the current schema; destructive schema changes require a separate recovery plan.
 
 For database recovery, use Neon’s documented point-in-time recovery or restore workflow. Record restore tests and measured recovery time.
 

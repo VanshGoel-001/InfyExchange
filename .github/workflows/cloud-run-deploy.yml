@@ -7,19 +7,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: cloud-run-production
-  cancel-in-progress: true
+  group: cloud-run-neon-staging
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: neon-staging
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
       - name: Validate deployment settings
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -28,33 +29,93 @@ jobs:
           GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+          ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
         run: |
           for variable in GCP_PROJECT_ID GCP_REGION CLOUD_RUN_SERVICE \
             GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT \
-            CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT CORS_ORIGINS; do
+            CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT ARTIFACT_REGISTRY_REPOSITORY CORS_ORIGINS; do
             if [[ -z "${!variable}" ]]; then
               echo "Missing required GitHub repository variable: $variable" >&2
               exit 1
             fi
           done
       - id: auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Deploy API
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+      - name: Configure Artifact Registry authentication
+        env:
+          GCP_REGION: ${{ vars.GCP_REGION }}
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+      - name: Build, attest, and push container
+        id: image
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}
+        run: |
+          image_tag="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/infyexchange-api:${GITHUB_SHA}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=mode=max \
+            --sbom=true \
+            --tag "$image_tag" \
+            --metadata-file "$RUNNER_TEMP/build-metadata.json" \
+            --push \
+            backend
+          digest="$(jq -r '.["containerimage.digest"] // empty' "$RUNNER_TEMP/build-metadata.json")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "BuildKit did not return a valid image digest." >&2
+            exit 1
+          fi
+          echo "image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPOSITORY}/infyexchange-api@${digest}" >> "$GITHUB_OUTPUT"
+      - name: Pull exact image digest for scanning
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: docker pull "$IMAGE"
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: 0.76.2
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.image }}
+          format: cyclonedx
+          output: sbom.cdx.json
+          exit-code: '0'
+          vuln-type: os,library
+      - name: Retain SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: infyexchange-api-sbom-${{ github.sha }}
+          path: sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Block high and critical image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: 0.76.2
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.image }}
+          format: table
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Deploy scanned image by digest
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           GCP_REGION: ${{ vars.GCP_REGION }}
           CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
           CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          IMAGE: ${{ steps.image.outputs.image }}
         run: |
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
-            --source backend \
+            --image "$IMAGE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --platform managed \
