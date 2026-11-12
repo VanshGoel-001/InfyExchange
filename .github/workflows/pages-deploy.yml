@@ -1,10 +1,7 @@
 name: Deploy Cloudflare Pages
 
 on:
-  workflow_run:
-    workflows: ["Deploy Cloud Run"]
-    types: [completed]
-    branches: [deploy/neon-cloudrun-cloudflare-pages]
+  workflow_call:
 
 permissions:
   contents: read
@@ -15,14 +12,11 @@ concurrency:
 
 jobs:
   deploy:
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'deploy/neon-cloudrun-cloudflare-pages'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

@@ -1,10 +1,7 @@
 name: Deploy Cloud Run
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [deploy/neon-cloudrun-cloudflare-pages]
+  workflow_call:
 
 permissions:
   contents: read
@@ -14,21 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-source:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require successful CI push to main
-        env:
-          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          CI_EVENT: ${{ github.event.workflow_run.event }}
-          CI_BRANCH: ${{ github.event.workflow_run.head_branch }}
-        run: |
-          if [[ "$CI_CONCLUSION" != success || "$CI_EVENT" != push || "$CI_BRANCH" != deploy/neon-cloudrun-cloudflare-pages ]]; then
-            echo "Cloud Run deployment requires successful CI for a push to the Neon deployment branch." >&2
-            exit 1
-          fi
   deploy:
-    needs: validate-source
     runs-on: ubuntu-latest
     permissions:
       contents: read

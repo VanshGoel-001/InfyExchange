@@ -63,3 +63,20 @@ jobs:
         run: docker compose config -q
       - name: Build Cloud Run container
         run: docker build --tag infyexchange-api:ci backend
+
+  deploy-cloud-run:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/deploy/neon-cloudrun-cloudflare-pages'
+    needs: [frontend, backend, deployment-config]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/cloud-run-deploy.yml
+    secrets: inherit
+
+  deploy-pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/deploy/neon-cloudrun-cloudflare-pages'
+    needs: deploy-cloud-run
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pages-deploy.yml
+    secrets: inherit
