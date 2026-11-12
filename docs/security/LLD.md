@@ -1,204 +1,53 @@
-# Low-Level Design — Security Controls
+# Low-Level Design
 
-**Document type:** LLD · **Version:** 1.1 · **Status:** Implemented (repository scope)
+This document records the application's security controls and the production-specific behavior of Cloud Run, Neon, and Cloudflare Pages.
 
-Every control below is implemented in the repository, with exact locations. Deployment-side
-controls are marked **DEPLOY** and exist only as runbook procedures.
+## Request and data flow
 
-## 1. Network
+The browser loads the SPA from Cloudflare Pages and calls the FastAPI service on Cloud Run over HTTPS. The API connects to Neon PostgreSQL over TLS and sends image uploads to Cloudinary. Docker Compose runs only a local PostgreSQL database for development.
 
-### 1.1 Container network isolation — `backend/docker-compose.yml` (`prod` profile)
+Cloud Run sets the container `PORT`; the Docker image listens on that value. Runtime credentials are supplied through Google Secret Manager. The frontend receives only the public `VITE_API_BASE_URL` during its build.
 
-- `internal` network (`internal: true`) hosts `postgres` + `api`; it has **no route to the host**.
-- `edge` network hosts `api` + `web`. Only `web` publishes a port (`80:80`).
-- PostgreSQL (prod) publishes **no port**; the `dev` profile's `postgres-dev` publishes 5432 — see §8.
-- Outbound egress remains open for the `api` container (Cloudinary uploads). Restricting it is
-  a **DEPLOY** decision (OCI NSG egress rules per destination: `api.cloudinary.com`,
-  `res.cloudinary.com`).
+## Database and migrations
 
-### 1.2 Edge rate limiting — `backend/nginx.conf`
+SQLAlchemy uses a bounded connection pool configured by `DB_POOL_SIZE` and `DB_MAX_OVERFLOW`. Cloud Run currently deploys with a maximum of three instances and per-instance pool limits set in the workflow. Review these limits against the Neon plan before increasing Cloud Run scale.
 
-```nginx
-limit_req_zone $binary_remote_addr zone=api_rl:10m rate=20r/s;
-limit_conn_zone $binary_remote_addr zone=api_conn:10m;
-location /api/ { limit_req zone=api_rl burst=40 nodelay; limit_conn api_conn 20; ... }
-```
+Pending Alembic migrations run when an API instance starts. PostgreSQL transaction-scoped advisory locking serializes concurrent migration attempts. Migrations should remain backward-compatible with the previous Cloud Run revision during rollout; destructive changes require a staged migration and rollback plan.
 
-Timeouts bound slow clients: `client_body_timeout 15s`, `client_header_timeout 15s`,
-`send_timeout 30s`, `keepalive_timeout 30s`, `proxy_read_timeout 30s`,
-`proxy_connect_timeout 10s`, `client_max_body_size 30m` (matches 5 images × 5 MB + multipart).
+Neon provides managed database backups and recovery features according to the selected plan. Enable an appropriate retention/PITR policy and verify a restore before launch.
 
-### 1.3 Origin protection — **DEPLOY**
+## Response security
 
-Cloudflare-proxied DNS + OCI NSG allowlisting of `https://www.cloudflare.com/ips-*` ranges on
-port 80/443; host UFW mirroring the NSG. Procedure: runbook §3. Not configurable from the repo.
+`SecurityHeadersMiddleware` in `backend/app/middleware.py` sets:
 
-## 2. Transport and Headers
+| Header | Purpose |
+| --- | --- |
+| `X-Content-Type-Options: nosniff` | Prevent content-type sniffing |
+| `X-Frame-Options: DENY` | Prevent framing |
+| `Referrer-Policy` | Restrict referrer information |
+| `Permissions-Policy` | Disable unused browser capabilities |
+| `Content-Security-Policy` | Restrict API response content |
+| `Cache-Control: no-store` | Avoid caching sensitive API responses |
+| `Strict-Transport-Security` | Optional HTTPS policy, controlled by `HSTS_ENABLED` |
 
-### 2.1 Application security headers — `backend/app/middleware.py`
+The SPA has separate response headers generated into `dist/_headers` by `vite.config.js`. Keep CSP in report-only mode until browser testing shows no required behavior is blocked, then enable enforcement and redeploy Pages.
 
-`SecurityHeadersMiddleware` sets on every response (does not overwrite existing values):
+## Authentication and authorization
 
-| Header | Value | Notes |
-|---|---|---|
-| `X-Content-Type-Options` | `nosniff` | |
-| `X-Frame-Options` | `DENY` | |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | configurable `REFERRER_POLICY` |
-| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=()` | configurable |
-| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'` | API/JSON only; exempts `/docs`, `/redoc`, `/openapi.json` |
-| `Cache-Control` | `no-store` | only on `/api/auth`, `/api/users/me`, `/api/interests`, `/api/admin` |
-| `Strict-Transport-Security` | `max-age=<HSTS_MAX_AGE>[; includeSubDomains]` | **only when `HSTS_ENABLED=true`** |
+- JWT uses HS256 with the accepted algorithm pinned during verification.
+- Passwords are hashed with Argon2id.
+- Protected routes require authentication; admin routes require the admin role.
+- Mutations verify resource ownership. Contact details are available to participants only after an interest is accepted.
+- Request IDs are returned to clients and included in application logs.
 
-`RequestContextMiddleware` assigns `X-Request-ID` (sanitized client value or UUID4) and binds it
-to log records via `ContextVar`; nginx forwards its own `$request_id`.
+## Rate limiting
 
-### 2.2 API gateway headers — `backend/nginx.conf`
+The API applies settings-driven sliding-window limits to authentication, registration, writes, reads, contact access, and admin routes. Counters live in process memory, so limits are per Cloud Run instance and reset when an instance restarts. Add a shared store if consistent cross-instance enforcement is needed.
 
-The gateway now fronts **only the API** (the SPA is hosted on Cloudflare Pages / Vercel).
-`backend/nginx.conf` adds the same headers at the edge plus:
+## Remaining risks
 
-- `Content-Security-Policy-Report-Only` scoped to the API origin (`default-src 'self'`;
-  `img-src 'self' data: https://res.cloudinary.com`; `frame-ancestors 'none'`). The **SPA's**
-  HTML-facing CSP — inline-style/fonts allowlist, `connect-src` to the API origin — is the
-  static host's responsibility (a `_headers` file on Cloudflare Pages, `headers` in `vercel.json`).
-- `server_tokens off`.
-- `location ~ /\.` denies dotfiles.
-- HSTS is commented out by design (enable per runbook §5 after HTTPS verification).
-
-**Enforcement path for CSP:** run report-only for at least one release cycle, confirm zero
-legitimate violations, then rename the header to `Content-Security-Policy`. For the SPA this
-burn-in happens on the static host, where `connect-src` must list the API origin so the
-cross-origin calls pass CSP once enforced.
-
-### 2.3 HSTS gate
-
-`HSTS_ENABLED=false` by default everywhere. Enable only when: Cloudflare proxy is active, SSL
-mode is Full (strict), and no subdomain is HTTP-only. Ramp `HSTS_MAX_AGE` 300 → 86400 → 604800 →
-15552000. `HSTS_INCLUDE_SUBDOMAINS` stays `false` unless every subdomain is HTTPS.
-
-### 2.4 Database transport
-
-PostgreSQL is container-local (`postgres:5432` on the compose `internal` network). If the DB is
-ever moved off-host, `DATABASE_URL` must carry `?sslmode=verify-full` (psycopg3 honors
-`sslmode`) and `PGSSLROOTCERT` must point to a CA bundle. **DEPLOY** (host-level).
-
-## 3. Authentication
-
-- JWT HS256 via PyJWT; `algorithms=["HS256"]` pinned at decode (algorithm-confusion safe;
-  covered by test `test_alg_none_token_rejected`).
-- Passwords hashed with Argon2id (explicit `Argon2Hasher`, pinned so a `pwdlib` upgrade cannot
-  change the algorithm; regression test asserts the `$argon2id$` prefix); verification is constant-time
-  through the library.
-- Login responses are identical for unknown email vs wrong password
-  (`Invalid email or password`); covered by `test_login_failure_messages_are_identical`.
-- Deactivated users are rejected on every authenticated request (`is_active` check); covered by
-  `test_deactivated_user_rejected`.
-- Password policy (`app/schemas/auth.py`): ≥ 8 chars, ≤ 100, at least one letter and one digit;
-  `LoginRequest.password` is capped at 100 chars to bound hashing cost.
-- Token lifetime remains `ACCESS_TOKEN_EXPIRE_MINUTES=10080` (7 days) to preserve the frontend
-  contract; lowering it is a deployment knob (recommended: 1440 for admin-heavy sites).
-  There is **no refresh-token flow and no revocation list** (residual risk R-03).
-
-## 4. Token storage trade-off (documented threat assessment)
-
-The frontend stores the bearer token in `localStorage('infy_token')` (`src/services/api.js`,
-`src/context/AuthContext.jsx`). This was **kept** to avoid breaking the API contract.
-
-- Exposure: any XSS payload can read the token; therefore XSS prevention is the primary control
-  (CSP report-only → enforcing, React escaping, no `dangerouslySetInnerHTML` usage).
-- CSRF: not applicable to header-borne bearer tokens; cookies would introduce CSRF duties.
-- Migration path (future): HttpOnly + `Secure` + `SameSite=Lax` cookie set by `/api/auth/login`,
-  CSRF double-submit token for state-changing routes, `credentials: 'include'` in the client.
-  This is an API-contract change and is out of scope for the incremental hardening.
-
-## 5. Authorization
-
-- Router-level dependency `get_current_admin` on `/api/admin/*`; every mutation checks resource
-  ownership before acting (`listings.py` update/delete, `needs.py` delete,
-  `interests.py` accept/reject/contact).
-- `GET /api/interests/{id}/contact` reveals contact data only to the two participants and only
-  after `ACCEPTED` (`interests.py` lines ~320-348).
-- Covered by `tests/test_authorization.py` (horizontal/vertical escalation, third-party access).
-
-## 6. Input Validation and Data Access
-
-- All write payloads are Pydantic models with length/range/enum constraints; multipart form
-  fields carry explicit `Form(...)` constraints.
-- Queries use SQLAlchemy ORM expressions only; no string-built SQL anywhere in `app/`.
-- Error handlers (`app/main.py`) map validation errors to flattened 422 details and mask
-  `SQLAlchemyError`/unexpected exceptions behind generic messages; full detail goes to logs only.
-- Response models exclude `password_hash` (`UserResponse`); covered by tests.
-- Upload validation: content-type allowlist, magic-byte check, 5 MB streaming cap, 5 images per
-  listing (`app/services/cloudinary.py`, `app/routers/listings.py`).
-
-## 7. Rate Limiting — `app/services/rate_limit.py`
-
-Sliding-window, in-memory, **per worker process** (documented limitation R-02). All limits are
-settings-driven (`RATE_LIMIT_*`, default 60 s window):
-
-| Limiter | Default | Applied at |
-|---|---|---|
-| login (per IP) | 10 / min | `POST /api/auth/login` |
-| login-account (per hashed email) | 10 / min | `POST /api/auth/login` |
-| register (per IP) | 5 / min | `POST /api/auth/register` |
-| create (per IP) | 10 / min | `POST /api/listings`, `/api/needs`, `/api/interests/listing/{id}` |
-| read (per IP) | 120 / min | `GET /api/listings`, `/api/needs` |
-| contact (per IP) | 20 / min | `GET /api/interests/{id}/contact` |
-| admin (per IP) | 60 / min | router-level on `/api/admin/*` |
-
-- Rejections are HTTP 429 with `Retry-After: <window>` and a `security` log line.
-- Keying uses `request.client.host`, resolved by uvicorn `--proxy-headers` from nginx's
-  `X-Real-IP`/`X-Forwarded-For`. Because uvicorn is started with `--forwarded-allow-ips=*`, an
-  attacker who can reach the API directly can spoof the header — the API has no published port
-  and should only be reachable via nginx and Cloudflare (deployment check NET-004). Residual
-  risk R-06.
-- Memory safety: expired keys are pruned once per window and the key count is capped at
-  `MAX_TRACKED_KEYS = 10_000` with oldest-key eviction; covered by unit tests.
-
-## 8. Dev Compose Warning — `backend/docker-compose.yml`
-
-The **`dev` profile** (`postgres-dev`) publishes `5432:5432` with `postgres/postgres`. It is not used
-in production, but it is a foot-gun on shared networks: run it only on a trusted machine or
-change it to bind `127.0.0.1:5432:5432`. Not modified here to avoid breaking local workflows.
-
-## 9. Logging and Monitoring
-
-- `app/utils/logging_utils.py`: single root handler, UTC ISO-8601 timestamps,
-  `request_id` injection, `security` logger namespace.
-- Events emitted: `auth_failed`, `login_failed`, `deactivated_account_access`,
-  `admin_access_denied`, `rate_limit_exceeded`, `service_started`, `service_stopped`.
-- No passwords, tokens, raw emails (login-account keys are SHA-256 truncated hashes), or
-  personal data are logged; IPs and user IDs are logged for investigation.
-- Docker log rotation: `json-file`, `max-size: 10m`, `max-file: 3` per service (disk exhaustion
-  guard).
-- **DEPLOY:** ship stdout to a central sink (OCI Logging free tier or journald), alert on
-  `security` log patterns — runbook §6.
-
-## 10. Supply Chain
-
-- `backend/requirements.txt` pins exact versions (verified against the running environment:
-  fastapi 0.142.2, sqlalchemy 2.1.2, pydantic 2.13.5, pyjwt 2.15.1, cloudinary 1.46.2, …).
-- `backend/requirements.txt` also pins the dev/security toolchain: pytest 9.1.1, httpx 0.28.1, pytest-cov 7.1.0, bandit 1.9.4, pip-audit 2.10.1.
-- CI/scan commands (runbook §8): `pip-audit`, `bandit -r app`, `npm audit`,
-  `gitleaks detect`, `trivy fs`.
-- Docker base images are floating tags (`python:3.12-slim`, `postgres:17-alpine`,
-  `nginx:alpine`). Pinning digests is recommended (residual risk R-07).
-
-## 11. Changed Code Reference
-
-| File | Change |
-|---|---|
-| `backend/app/middleware.py` | New: security headers, request-ID correlation, no-store rules |
-| `backend/app/utils/logging_utils.py` | New: UTC logging, security logger, request-ID filter |
-| `backend/app/config.py` | New settings: headers, HSTS gate, ALLOWED_HOSTS, rate limits |
-| `backend/app/services/rate_limit.py` | Settings-driven limiters, `enforce()` with Retry-After, pruning, `rate_limit_dependency`, `account_key` |
-| `backend/app/main.py` | Logging setup, lifespan log events, CORS method/header allowlists, opt-in `TrustedHostMiddleware`, middleware registration |
-| `backend/app/dependencies.py` | Security logging on 401/403 paths |
-| `backend/app/routers/auth.py` | `enforce()` usage, per-account login limiter, `login_failed` log |
-| `backend/app/routers/{listings,needs,interests,admin}.py` | Rate limiter wiring |
-| `backend/app/schemas/auth.py` | Password strength validator; login password length cap |
-| `backend/Dockerfile` | `--limit-concurrency 200`, `--timeout-keep-alive 30` |
-| `backend/nginx.conf` | CSP report-only, Permissions-Policy, rate/conn limits, timeouts, dotfile deny, `server_tokens off`, `X-Request-ID` pass-through |
-| `backend/docker-compose.yml` | Required secrets fail-fast, internal network, resource/pids limits, `no-new-privileges`, `cap_drop`, `read_only` + tmpfs for web, log rotation |
-| `backend/requirements.txt` | Pinning; runtime + dev/test/security toolchain (single manifest) |
-| `backend/.env.example` | Documented security knobs (single dev + prod template) |
+- The browser stores JWTs in `localStorage`; an XSS issue could expose a token.
+- Rate-limit counters are not shared across instances.
+- There is no token revocation or refresh flow.
+- Security headers and access controls must be verified against the deployed Cloud Run and Pages services.
+- Database recovery depends on the configured Neon plan and a tested restore procedure.

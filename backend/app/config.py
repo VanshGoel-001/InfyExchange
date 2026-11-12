@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     database_url: str
+    database_url_unpooled: str | None = None
 
     secret_key: str
     algorithm: str = "HS256"
@@ -30,7 +31,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:4200"
     allowed_email_domains: str = "gmail.com"
 
-    # --- Security headers (applied by app middleware and nginx) ---
+    # --- Security headers ---
     referrer_policy: str = "strict-origin-when-cross-origin"
     permissions_policy: str = "camera=(), microphone=(), geolocation=(), payment=()"
     # Strict CSP for JSON API responses; documentation endpoints are exempt

@@ -26,11 +26,11 @@ COPY alembic ./alembic
 RUN chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 8000
+ENV PORT=8080
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Launch uvicorn with proxy headers enabled so rate limiter captures real remote IPs,
-# plus concurrency/keep-alive caps to bound resource exhaustion
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*", "--limit-concurrency", "200", "--timeout-keep-alive", "30"]
+# Cloud Run supplies PORT; local runs use the same default.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips '*' --limit-concurrency 200 --timeout-keep-alive 30"]

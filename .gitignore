@@ -49,3 +49,4 @@ WhatsApp*
 
 # ---- Transient browser-verification screenshots (repo root only; app images live in src/) ----
 /*.png
+.neon

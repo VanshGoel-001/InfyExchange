@@ -2,23 +2,22 @@ name: Deploy Cloudflare Pages
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Deploy Cloud Run"]
     types: [completed]
-    branches: [main]
+    branches: [deploy/neon-cloudrun-cloudflare-pages]
 
 permissions:
   contents: read
 
 concurrency:
-  group: cloudflare-pages-production
+  group: cloudflare-pages-neon-deployment
   cancel-in-progress: true
 
 jobs:
   deploy:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'deploy/neon-cloudrun-cloudflare-pages'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,4 +55,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=deploy/neon-cloudrun-cloudflare-pages

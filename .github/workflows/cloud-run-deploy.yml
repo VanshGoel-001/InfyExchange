@@ -1,0 +1,96 @@
+name: Deploy Cloud Run
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [deploy/neon-cloudrun-cloudflare-pages]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-run-production
+  cancel-in-progress: true
+
+jobs:
+  validate-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful CI push to main
+        env:
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_EVENT: ${{ github.event.workflow_run.event }}
+          CI_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [[ "$CI_CONCLUSION" != success || "$CI_EVENT" != push || "$CI_BRANCH" != deploy/neon-cloudrun-cloudflare-pages ]]; then
+            echo "Cloud Run deployment requires successful CI for a push to the Neon deployment branch." >&2
+            exit 1
+          fi
+  deploy:
+    needs: validate-source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Validate deployment settings
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+        run: |
+          for variable in GCP_PROJECT_ID GCP_REGION CLOUD_RUN_SERVICE \
+            GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT \
+            CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT CORS_ORIGINS; do
+            if [[ -z "${!variable}" ]]; then
+              echo "Missing required GitHub repository variable: $variable" >&2
+              exit 1
+            fi
+          done
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy API
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+          CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+        run: |
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --source backend \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --service-account "$CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT" \
+            --port 8080 \
+            --memory 1Gi \
+            --cpu 1 \
+            --max 3 \
+            --concurrency 40 \
+            --set-env-vars "ENVIRONMENT=production,CORS_ORIGINS=$CORS_ORIGINS,HSTS_ENABLED=true,DB_POOL_SIZE=3,DB_MAX_OVERFLOW=2" \
+            --set-secrets "DATABASE_URL=NEON_DATABASE_URL:latest,DATABASE_URL_UNPOOLED=NEON_DATABASE_URL_UNPOOLED:latest,SECRET_KEY=SECRET_KEY:latest,CLOUDINARY_CLOUD_NAME=CLOUDINARY_CLOUD_NAME:latest,CLOUDINARY_API_KEY=CLOUDINARY_API_KEY:latest,CLOUDINARY_API_SECRET=CLOUDINARY_API_SECRET:latest"
+      - name: Check deployed API health
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+        run: |
+          service_url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(status.url)')"
+          curl --fail --retry 5 --retry-delay 5 "$service_url/health"

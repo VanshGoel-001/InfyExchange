@@ -9,11 +9,11 @@ The frontend and backend are deployed separately.
 | Component | Stack | Hosting |
 | --- | --- | --- |
 | Web app | React, Vite | Cloudflare Pages |
-| API | FastAPI, SQLAlchemy, Alembic | Oracle Cloud VM or another Linux host |
-| Database | PostgreSQL 17 | Docker Compose, private network |
+| API | FastAPI, SQLAlchemy, Alembic | Google Cloud Run |
+| Database | PostgreSQL | Neon |
 | Images | Cloudinary | Cloudinary |
 
-The VM runs Caddy for HTTPS, Nginx as a private API proxy, the API, and PostgreSQL. Only Caddy publishes ports 80 and 443. See [the security docs](docs/security/) for architecture and operational details.
+Cloud Run serves the API over HTTPS. Neon manages PostgreSQL; Cloudinary stores listing images. See [the security docs](docs/security/) for architecture and operational details.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ Start PostgreSQL from `backend/`:
 
 ```powershell
 cd backend
-docker compose --profile dev up -d
+docker compose up -d
 ```
 
 In a second terminal, configure and start the API:
@@ -53,32 +53,31 @@ Open `http://127.0.0.1:5173`. Vite forwards `/api` requests to the local API. Th
 
 ## Configuration
 
-Use [backend/.env.example](backend/.env.example) as the backend template. For local API runs, set `SECRET_KEY`, `DATABASE_URL`, and the three `CLOUDINARY_*` values.
+Use [backend/.env.example](backend/.env.example) as the local backend template. Set `SECRET_KEY`, `DATABASE_URL`, and the three `CLOUDINARY_*` values. The local Compose database listens only on `127.0.0.1:5432`.
 
-Production Compose requires `SECRET_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `API_DOMAIN`, `CORS_ORIGINS`, and the three `CLOUDINARY_*` values. Compose builds the database URL from the `POSTGRES_*` settings. Use a real DNS name for `API_DOMAIN`, point it to the VM, and set `CORS_ORIGINS` to the exact Cloudflare Pages origin.
+In production, store `NEON_DATABASE_URL` (pooled) and `NEON_DATABASE_URL_UNPOOLED` (direct), `SECRET_KEY`, and the three `CLOUDINARY_*` values in Google Secret Manager. Both Neon URLs must use the `postgresql+psycopg://` scheme and TLS. The runtime uses the pooled URL; Alembic migrations use the direct URL. Set the GitHub Actions variable `CORS_ORIGINS` to the exact Cloudflare Pages origin.
 
 Set `VITE_API_BASE_URL` in the Cloudflare Pages project settings to the API origin plus `/api`, for example `https://api.example.com/api`. Vite embeds this value during the build, so changing it requires a new deployment. Local development uses Vite's proxy and does not need this setting.
 
 ## Deploy
 
-On the VM, create `backend/.env` from the example, enter the production values, then run:
-
-```bash
-cd backend
-docker compose --profile prod up -d --build
-```
-
-Caddy obtains and renews the TLS certificate for `API_DOMAIN`. Ports 80 and 443 must be reachable from the internet. PostgreSQL, the API, and Nginx are not published to the host.
-
-Cloudflare Pages deployment runs from GitHub Actions after CI succeeds on a push to `main`. Configure these repository values:
+Cloud Run deployment runs from GitHub Actions after CI succeeds on a push to `deploy/neon-cloudrun-cloudflare-pages`. Configure Workload Identity Federation between GitHub and Google Cloud, grant the deploy service account permission to deploy Cloud Run services and act as the runtime service account, and grant the runtime service account access to all six secrets listed above. Configure these repository values:
 
 | Name | Type | Purpose |
 | --- | --- | --- |
 | `CLOUDFLARE_ACCOUNT_ID` | Variable | Cloudflare account identifier |
 | `CLOUDFLARE_PAGES_PROJECT` | Variable | Pages project name |
-| `VITE_API_BASE_URL` | Variable | API URL ending in `/api` |
+| `VITE_API_BASE_URL` | Variable | Cloud Run service URL ending in `/api` |
 | `CLOUDFLARE_API_TOKEN` | Secret | Token with permission to deploy Pages |
+| `GCP_PROJECT_ID` | Variable | Google Cloud project ID |
+| `GCP_REGION` | Variable | Cloud Run region |
+| `CLOUD_RUN_SERVICE` | Variable | Cloud Run service name |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Variable | Full Workload Identity Provider resource name |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | Variable | GitHub deployment service account email |
+| `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | Variable | Cloud Run runtime service account email |
+| `CORS_ORIGINS` | Variable | Exact Pages origin allowed by the API |
 
+Create the Cloud Run service once and note its HTTPS URL. Set `VITE_API_BASE_URL` to that URL plus `/api` before the next deployment. After that, GitHub Actions deploys the API first and the matching Cloudflare Pages branch second, following successful CI on `deploy/neon-cloudrun-cloudflare-pages`.
 ## Verify
 
 Run the frontend checks from the repository root:
@@ -97,11 +96,11 @@ python -m bandit -r app -q
 python -m pip_audit -r requirements.txt --progress-spinner off
 ```
 
-GitHub Actions runs these checks and validates the Compose, Nginx, Caddy, and backup configurations. For a live API security scan, see [the ZAP scan script](scripts/security/zap-api-scan.ps1).
+GitHub Actions runs these checks and builds the Cloud Run container. For a live API security scan, see [the ZAP scan script](scripts/security/zap-api-scan.ps1).
 
 ## Operations
 
-- Create encrypted PostgreSQL backups with [the backup script](backend/scripts/backup-postgres.sh). Setup and restore instructions are in [the security runbook](docs/security/SECURITY_RUNBOOK.md).
+- Configure Neon backups and point-in-time recovery for the selected plan; periodically verify restore procedures.
 - JWTs are stored in browser `localStorage`.
 - Rate limits are held in API process memory; multiple API instances would need a shared store such as Redis.
 - Profile editing, password changes, and account deletion are not currently supported by the API.
@@ -113,7 +112,7 @@ src/                  React application
 backend/app/           FastAPI routes, models, schemas, and services
 backend/alembic/       Database migrations
 backend/tests/         Backend tests
-backend/docker-compose.yml  Local and production services
+backend/docker-compose.yml  Local PostgreSQL service
 docs/security/         Architecture and operational documentation
 scripts/security/      Security scan and OpenAPI tools
 ```

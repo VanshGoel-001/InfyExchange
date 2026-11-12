@@ -10,7 +10,10 @@ import app.models  # Ensures all ORM models are registered on Base.metadata
 config = context.config
 
 # Dynamically set sqlalchemy.url from Pydantic settings (never hardcoded in .ini)
-config.set_main_option("sqlalchemy.url", settings.database_url)
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.database_url_unpooled or settings.database_url,
+)
 
 if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
@@ -35,6 +38,17 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in online mode using database engine connection."""
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

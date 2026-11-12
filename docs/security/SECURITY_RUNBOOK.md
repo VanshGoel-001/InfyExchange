@@ -1,253 +1,85 @@
-# Security Runbook — Operations, Deployment, Rollback
+# Operations Runbook
 
-**Document type:** Runbook · **Version:** 1.1
+This runbook covers the production deployment on Cloudflare Pages, Google Cloud Run, and Neon. Do not put secret values in Git, issues, or logs.
 
-Values in `<ANGLE_BRACKETS>` must be discovered on the real deployment; they were not present in
-the repository. Never paste secrets into tickets, chat, or this document.
+## Production setup
 
-## 0. Placeholders to fill in (deployment facts)
+### Google Cloud
 
-| Placeholder | Meaning | How to discover |
-|---|---|---|
-| `<FRONTEND_DOMAIN>` | Cloudflare Pages domain | Cloudflare dashboard → Pages |
-| `<API_DOMAIN>` | Public API hostname | Cloudflare DNS records |
-| `<ORIGIN_IP>` | Oracle VM public IP | OCI console → instance |
-| `<OCI_REGION>`, `<OCI_VM_SHAPE>` | Region and shape | OCI console |
-| `<OCI_VM_OS>` | OS and version | `cat /etc/os-release` |
-| `<ADMIN_SSH_PORT>` | SSH port | `sshd -T` on the VM |
-| `<ADMIN_IP>` | Your administrative source IP | `curl ifconfig.me` from admin host |
-| `<SSH_USER>` | Admin login user | existing access path |
+Enable Cloud Run, Cloud Build, Artifact Registry, Secret Manager, and IAM APIs. Configure Workload Identity Federation for this repository and the `main` branch; do not create a long-lived service-account key for GitHub Actions.
 
-## 1. Required production environment (`backend/.env`, next to the compose file)
+Set these repository variables for the `Deploy Cloud Run` workflow:
 
-Copy `backend/.env.example` → `backend/.env`, fill every `CHANGE_ME`, then `chmod 600 .env`.
+| Variable | Value |
+| --- | --- |
+| `GCP_PROJECT_ID` | Google Cloud project ID |
+| `GCP_REGION` | Cloud Run region |
+| `CLOUD_RUN_SERVICE` | API service name |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full workload identity provider resource name |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | CI deployer service-account email |
+| `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | Runtime service-account email |
+| `CORS_ORIGINS` | Exact Cloudflare Pages origin |
 
-| Variable | Rule |
-|---|---|
-| `SECRET_KEY` | ≥ 32 random bytes hex (`python -c "import secrets; print(secrets.token_hex(32))"`); rotating it invalidates all JWTs |
-| `POSTGRES_PASSWORD` | Long random; changing it after first boot requires `ALTER USER` inside the DB (volume keeps the old one) |
-| `CORS_ORIGINS` | Exact `https://…` frontend origins, comma-separated, never `*` |
-| `ALLOWED_HOSTS` | Optional; set to `<API_DOMAIN>` to enforce Host header once DNS is stable |
-| `HSTS_ENABLED` | `false` until §5 verification is complete |
+Grant the deployer permission to deploy Cloud Run services, build and publish the source image, and impersonate the runtime service account. Grant the runtime account `Secret Manager Secret Accessor` on the required secrets.
 
-Compose **refuses to start** when any required variable is missing — that is intentional.
+Create these Secret Manager secrets:
 
-## 2. Host baseline (Ubuntu example; adapt to `<OCI_VM_OS>`)
+| Secret | Value |
+| --- | --- |
+| `NEON_DATABASE_URL` | Neon connection URL using `postgresql+psycopg://` and TLS (`sslmode=require`) |
+| `SECRET_KEY` | Random JWT signing key, at least 32 random bytes |
+| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
+| `CLOUDINARY_API_KEY` | Cloudinary API key |
+| `CLOUDINARY_API_SECRET` | Cloudinary API secret |
 
-```bash
-sudo apt update && sudo apt -y upgrade            # then enable unattended security updates
-sudo dpkg-reconfigure --priority=low unattended-upgrades
-sudo timedatectl set-ntp true
-sudo apt -y install ufw fail2ban
-```
+Use a Neon connection string suitable for the application’s connection pattern. The runtime pool is configured for at most 5 connections per instance, with up to 3 Cloud Run instances by default.
 
-Enable `unattended-upgrades` only for the security pocket; schedule reboots in a window you can
-monitor. `fail2ban` protects SSH (jail `sshd` default).
+### Neon
 
-## 3. Origin protection (Cloudflare → OCI)
+Use a dedicated application role with only the permissions the app needs. Keep the connection string in Secret Manager, not in GitHub variables or the Pages build. Enable the backup/PITR retention appropriate to the data and subscription plan. Test restoring a branch or backup before launch and periodically afterward.
 
-1. Cloudflare DNS: `<API_DOMAIN>` proxied (orange cloud); SSL mode **Full (strict)** once an
-   origin certificate exists, otherwise **Full** with a Cloudflare Origin CA certificate on
-   nginx (see §5).
-2. OCI: add NSG/security-list ingress **only** from Cloudflare ranges
-   (`https://www.cloudflare.com/ips-v4`, `ips-v6`) to ports 80/443; SSH only from `<ADMIN_IP>`
-   to `<ADMIN_SSH_PORT>`; **no rule** for 5432 or 8000.
-3. UFW (host level, mirrors NSG):
+### Cloudflare Pages
 
-```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow from <ADMIN_IP> to any port <ADMIN_SSH_PORT> proto tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable          # keep the SSH session open until you verify a second login!
-```
+Set these repository values for the `Deploy Cloudflare Pages` workflow:
 
-   Recovery: OCI serial console is the break-glass path if SSH locks out.
+| Name | Type | Value |
+| --- | --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | Variable | Cloudflare account ID |
+| `CLOUDFLARE_PAGES_PROJECT` | Variable | Pages project name |
+| `VITE_API_BASE_URL` | Variable | Cloud Run service URL ending in `/api` |
+| `CLOUDFLARE_API_TOKEN` | Secret | Token scoped to deploy the Pages project |
 
-4. Verify: NET-004 from an external host — direct `<ORIGIN_IP>:80` should now be refused.
-5. Optional hardening: Cloudflare **Authenticated Origin Pulls** (mutual TLS) — requires nginx
-   `ssl_verify_client on` with the Cloudflare CA; do not enable without a maintenance window.
+The API workflow completes before the Pages workflow starts. On the first deployment, deploy the API, copy its HTTPS service URL from Cloud Run, set `VITE_API_BASE_URL`, and rerun the Pages deployment if its first attempt ran before the variable was set.
 
-## 4. SSH hardening (after confirming key-based login works)
+## Deploy and verify
 
-`/etc/ssh/sshd_config.d/99-hardening.conf`:
+A push to `main` runs CI, deploys the API, then deploys the frontend. The API workflow applies pending Alembic migrations during startup. PostgreSQL advisory locking serializes migrations when Cloud Run starts multiple instances or revisions concurrently.
 
-```
-PermitRootLogin no
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-MaxAuthTries 4
-```
-
-`sudo sshd -t && sudo systemctl reload ssh`. Keep one root-capable session open while verifying.
-
-## 5. HTTPS and HSTS enablement
-
-1. Confirm `https://<API_DOMAIN>/health` works and `http://` redirects (Cloudflare "Always Use
-   HTTPS").
-2. If the origin needs TLS (Cloudflare Full strict): install a Cloudflare Origin CA certificate
-   on nginx (mount it via a volume and publish `443`), `listen 443` with it, and redirect 80→443.
-3. Burn-in CSP: keep `Content-Security-Policy-Report-Only`, then enforce and redeploy — on the
-   gateway by editing `backend/nginx.conf`, on the SPA by flipping `CSP_ENFORCE` in
-   `vite.config.js`, which regenerates `dist/_headers` at build time with `connect-src` derived
-   from `VITE_API_BASE_URL`. The SPA document is governed only by those static-host headers:
-   `backend/nginx.conf` protects the API origin and cannot reach the page holding the JWT.
-   Watch the browser console for report-only violations before enforcing, and add a rule only if
-   a violation proves it is needed — `style-src` deliberately omits `'unsafe-inline'` because
-   React assigns styles through the CSSOM and the build emits no inline `<style>`.
-4. Enable HSTS gradually: set `HSTS_ENABLED=true` with `HSTS_MAX_AGE=300`, deploy, verify no
-   breakage; raise to 86400 → 604800 → 15552000. Leave `HSTS_INCLUDE_SUBDOMAINS=false` until
-   every subdomain is HTTPS.
-5. Record the TLS tests (TLS-001…005) with `openssl s_client` output.
-
-## 6. Logging and alerting (zero-cost baseline)
-
-- All containers log to stdout with rotation (`json-file`, 10 MB × 3). Application security
-  events carry `request_id` and are emitted by the `security` logger.
-- Collect: `docker compose logs -f api` for live view; for persistence use OCI Logging
-  (free tier) or `journald` with `docker-compose` log driver change.
-- Minimum alerts (any log sink or a cron `grep`→mail script):
-  - `rate_limit_exceeded` bursts (≥ 20/min)
-  - `login_failed` spikes (≥ 50/min)
-  - `admin_access_denied` > 0
-  - container restarts (`docker events`)
-  - disk > 85 % (`df` cron)
-- Retention: keep security logs ≥ 30 days; rotate and restrict access to the VM account only.
-
-## 7. Backups and restore (RPO 24 h / RTO 2 h baseline)
-
-Install `age` and `rclone` on the VM, configure a dedicated rclone remote (for example,
-Cloudflare R2), and store its credential file with permissions restricted to the backup
-operator. Copy `backend/backup.env.example` to `/etc/infyexchange-backup.env`, set the
-age public recipient and remote path, and protect the file. The age private key must
-remain off the VM. The script uploads only encrypted output and also retains encrypted
-local copies according to `BACKUP_RETENTION_DAYS`.
-
-Run nightly from cron on the VM:
+Check the service and health endpoint:
 
 ```bash
-15 2 * * * cd /opt/infyexchange/backend && set -a && . /etc/infyexchange-backup.env && set +a && ./scripts/backup-postgres.sh >> /var/log/infyexchange-backup.log 2>&1
+gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)'
+curl -fsS "$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')/health"
 ```
 
-- The script fails if the database dump, encryption, or off-host upload fails. Confirm the
-   cron exit status and periodically test an actual restore.
-- Monthly restore test into a scratch container:
+Then verify from the Pages origin: login, listing creation, image upload, and the expected CORS policy. Use synthetic accounts and non-production data for security scans.
 
-```bash
-docker run --rm -e POSTGRES_PASSWORD=scratch -p 127.0.0.1:55432:5432 -d --name pgtest postgres:17-alpine
-age -d -i <BACKUP_KEY> infy_<date>.dump.age > /tmp/restore.dump
-docker exec -i pgtest pg_restore -U postgres -d postgres -C < /tmp/restore.dump   # adapt DB name
-docker exec pgtest psql -U postgres -c "select count(*) from users;"
-docker rm -f pgtest
-```
+## Logs and alerts
 
-Record outcome (REC-001…003). A backup never restored is not a recovery mechanism.
+Cloud Run writes application logs to Cloud Logging. Review request IDs and `security` events for failed logins, denied admin access, and rate-limit responses. Configure alerting and retention in Google Cloud; do not log tokens, passwords, database URLs, or Cloudinary secrets.
 
-## 8. Deploy, verify, rollback (change management)
+## Rollback
 
-Pre-deploy: `git status` clean; `docker compose --env-file .env --profile prod config -q` (in `backend/`) passes;
-`pytest` green; `bandit` clean.
+Cloud Run keeps prior revisions. Route traffic back to the last known-good revision with `gcloud run services update-traffic`. Revert the source change and push to `main` to redeploy. Before rolling back a database migration, confirm that the previous application revision is compatible with the current schema; destructive schema changes require a separate recovery plan.
 
-Deploy:
+For database recovery, use Neon’s documented point-in-time recovery or restore workflow. Record restore tests and measured recovery time.
 
-```bash
-cd backend                        # the backend deploy unit (compose + Dockerfile + nginx.conf)
-docker compose --profile prod up -d --build
-docker compose --profile prod ps
-curl -fsS "https://${API_DOMAIN}/health" || echo "API unhealthy"
-```
+## Security scans
 
-Only Caddy publishes ports 80/443. `API_DOMAIN` must resolve to the VM and inbound 80/443 must be
-reachable for automatic certificate issuance and renewal. The frontend is built and deployed to
-Cloudflare Pages by GitHub Actions after successful CI on `main`; set repository variable
-`VITE_API_BASE_URL` to this API origin **plus `/api`** (the gateway proxies `/api/` and `/health`
-only; `vite.config.js` rejects a base without the suffix at build time).
-
-Post-deploy smoke: login with a synthetic account → 200; `PUT` another user's listing → 403;
-`curl -sI /api/...` shows the security headers; `docker compose logs api | grep service_started`.
-On the frontend origin, `curl -sI https://<FRONTEND_DOMAIN>/` must show the CSP header, and
-`curl -sI https://<FRONTEND_DOMAIN>/listings` must return 200 with `index.html` — a 404 there
-means `dist/_redirects` did not ship and every deep link is broken for real users.
-
-Rollback per change of this iteration:
-
-| Change | Rollback |
-|---|---|
-| App middleware/headers/limits | `git revert <commit>` of backend changes; rebuild api (`up -d --build api`). No DB migration involved. |
-| Compose hardening | Restore previous `backend/docker-compose.yml` from git; `docker compose --profile prod up -d`. Networks are recreated; data volume untouched. If a container fails to start due to `cap_drop`/`read_only`, remove those two keys for that service. |
-| Caddy/Nginx edge | Restore the previous Compose and Nginx files, then `docker compose --profile prod up -d`. Caddy certificate state is stored in named volumes and is not removed by this rollback. |
-| Pinned requirements | Restore previous `requirements.txt`; rebuild api. |
-| Env template changes | `.env` untouched by this iteration except new optional keys (`HSTS_ENABLED`, `ALLOWED_HOSTS`) with safe defaults. |
-
-## 9. Optional host tooling (evaluate before installing)
-
-| Tool | Install when | Cost of running |
-|---|---|---|
-| Wazuh agent + manager | VM ≥ 4 GB RAM and someone reviews alerts | Manager elsewhere; agent light |
-| ClamAV | Uploads may ever be stored/processed locally | Signature updates daily; RAM ~1 GB during scan |
-| Suricata | Traffic is visible unencrypted at the VM and IPS is enforceable | CPU-heavy; encrypted TLS limits value |
-| Trivy / OSV / pip-audit | Always (CI or weekly cron) | Negligible |
-| Gitleaks | Always (pre-commit or weekly) | Negligible |
-
-Do not install and claim protection without verifying alerts are received.
-
-### DAST (OWASP ZAP)
-
-`scripts/security/zap-api-scan.ps1` runs ZAP from Docker and writes HTML, Markdown and JSON
-reports to `zap-reports/` (gitignored). Run it on staging before each release:
+The API disables `/docs`, `/redoc`, and `/openapi.json` in production. Run the ZAP API scan against a staging deployment with documentation enabled, not production:
 
 ```powershell
-# API scan (needs ENVIRONMENT != production so /openapi.json is served)
 powershell -ExecutionPolicy Bypass -File scripts/security/zap-api-scan.ps1
-
-# SPA baseline scan
-powershell -ExecutionPolicy Bypass -File scripts/security/zap-api-scan.ps1 -Mode baseline `
-    -Target http://host.docker.internal:5173
-
-# Authenticated scan (context file injects the Bearer header)
-powershell -ExecutionPolicy Bypass -File scripts/security/zap-api-scan.ps1 `
-    -ContextFile .\zap-auth.conf
 ```
 
-- The target must be reachable from inside the container: `host.docker.internal` on Docker
-  Desktop, or attach the container to the compose network (`docker run --network <project>_edge`)
-  on Linux.
-- Production deliberately disables `/docs`, `/redoc` and `/openapi.json`. Scan staging/test
-  instead of re-enabling API docs in production.
-- Triage: every High alert is either fixed or entered in the THREAT_MODEL register with a
-  residual-risk entry and an owner. Exit codes: 0 pass, 1 fail threshold reached, 2 scan error.
-
-## 10. Incident response quick card
-
-1. **Triage:** identify event type from `security` logs / Cloudflare / OCI audit.
-2. **Contain:** for credential exposure — rotate `SECRET_KEY` (invalidates all tokens), rotate
-   Cloudinary keys, rotate DB password (`ALTER USER` + update `.env` + restart api); for host
-   compromise — snapshot disk, block NSG ingress, rotate everything, rebuild from clean image.
-3. **Eradicate:** patch the vector (dependency upgrade, config fix).
-4. **Recover:** restore from latest verified backup if data integrity is in doubt (§7).
-5. **Learn:** update this runbook, threat model, and tests; record timeline and evidence.
-
-Secret rotation procedures:
-
-```bash
-# SECRET_KEY
-python -c "import secrets; print(secrets.token_hex(32))"   # put into .env, restart api
-# Cloudinary: rotate API key/secret in the Cloudinary console, update .env, restart api
-# Postgres: docker compose exec postgres psql -U <user> -d <db> -c "ALTER USER <user> WITH PASSWORD '<new>';"
-```
-
-If a secret ever lands in git history: rotate first, then clean history (`git filter-repo`) —
-deleting the file in a new commit is not sufficient. Current state: `.env` was **never
-committed** (`git log --all -- backend/.env` empty), but the local file holds live Cloudinary
-credentials — rotate them anyway if the machine or its backups were ever shared.
-
-## 11. Maintenance calendar
-
-| Cadence | Task |
-|---|---|
-| Weekly | `pip-audit`, `npm audit`, review `security` log alerts |
-| Weekly | Check disk, container restarts, failed SSH attempts |
-| Monthly | Restore-test a backup; review OCI/Cloudflare rules drift |
-| Quarterly | Rotate DB password and Cloudinary keys; re-run full test plan; threat-model review |
-| On every deploy | §8 checklist; re-run `pytest` + `bandit`; verify headers |
+Triage high-severity findings before release. Never run load or destructive tests against production.
