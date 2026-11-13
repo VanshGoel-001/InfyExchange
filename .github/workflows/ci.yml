@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Newest commit wins. The deploy branch never cancels a run in progress (it could stop a deploy halfway); it queues only the latest.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/deploy/neon-cloudrun-cloudflare-pages' }}
+
 jobs:
   frontend:
     name: Frontend (build + npm audit)
