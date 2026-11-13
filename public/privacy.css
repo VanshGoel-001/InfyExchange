@@ -1,0 +1,82 @@
+/* Standalone styles for /privacy. Mirrors the app's look (src/style.css) but must not depend on
+   its hashed build output, so Google can always fetch this page without running the SPA. */
+* { box-sizing: border-box }
+
+body {
+  margin: 0;
+  background: #f6f8fb;
+  color: #101827;
+  font-family: Inter, Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.65
+}
+
+header {
+  height: 78px;
+  display: flex;
+  align-items: center;
+  padding: 0 4.3%;
+  background: #fff;
+  border-bottom: 1px solid #e7ebf1;
+  box-shadow: 0 2px 8px #16234a0e;
+  position: sticky;
+  top: 0
+}
+
+.logo {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: inherit;
+  text-decoration: none
+}
+
+.logo img { width: 48px; height: 48px; object-fit: contain }
+.logo b { font-size: 25px; letter-spacing: -1.1px; display: block; line-height: 1.2 }
+.logo em { font-style: normal; color: #0874ee }
+.logo small { display: block; font-size: 12px; color: #59657a }
+
+.back {
+  margin-left: auto;
+  color: #0673ea;
+  font-weight: 600;
+  text-decoration: none
+}
+
+main {
+  max-width: 800px;
+  margin: 32px auto;
+  padding: 36px 40px;
+  background: #fff;
+  border: 1px solid #e7ebf1;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px #16234a0e
+}
+
+h1 { font-size: 30px; letter-spacing: -0.6px; margin: 0 0 4px }
+.updated { color: #59657a; margin: 0 0 24px }
+
+h2 {
+  font-size: 19px;
+  margin: 30px 0 8px;
+  padding-top: 20px;
+  border-top: 1px solid #e9edf2
+}
+
+ul { padding-left: 22px }
+li { margin: 6px 0 }
+a { color: #0673ea }
+
+footer {
+  text-align: center;
+  color: #536075;
+  padding: 8px 5% 40px;
+  font-size: 13px
+}
+
+@media (max-width: 700px) {
+  header { height: auto; padding: 12px 16px; gap: 12px; flex-wrap: wrap }
+  .logo small { display: none }
+  main { margin: 16px 12px; padding: 24px 20px }
+  h1 { font-size: 25px }
+}
