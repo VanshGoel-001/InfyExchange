@@ -3495,3 +3495,138 @@ input[name=password] {
     flex: 1
   }
 }
+
+/* Home page polish. Kept in one block at the end because earlier layers of this file
+   override each other and the last matching rule has to win. */
+
+/* Product cards: show the whole photo and keep the type badge in its own row above it,
+   not painted over the image. A photo-less card keeps its gradient and emoji. */
+.product-img {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  height: 190px
+}
+
+.product-img:has(img) {
+  background: #f4f6f9
+}
+
+.product-img .pill {
+  position: static;
+  order: -1;
+  align-self: flex-start;
+  margin: 9px 0 7px 11px
+}
+
+.product-img img {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  object-fit: contain
+}
+
+.product-img>span[aria-hidden] {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center
+}
+
+.listing-grid .product-img {
+  height: 150px
+}
+
+/* Category bar: never wrap a label, scroll sideways instead of squeezing, and drop the
+   divider after the last cell (it showed as a stray line at the bar's top-right corner). */
+.categories a {
+  white-space: nowrap
+}
+
+.categories a:last-child {
+  border-right: 0
+}
+
+@media(min-width:951px) {
+  .categories {
+    grid-template-columns: repeat(9, minmax(max-content, 1fr));
+    overflow-x: auto;
+    scrollbar-width: thin
+  }
+
+  /* Same width as the category bar so the headings and cards line up with it. */
+  .home-main {
+    width: 89%;
+    max-width: none;
+    padding-left: 0;
+    padding-right: 0
+  }
+}
+
+@media screen and (max-width:760px) {
+  .logo small {
+    text-wrap: balance
+  }
+
+  /* The header already shows the brand. The h1 stays for screen readers. */
+  .hero h1 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap
+  }
+
+  /* One swipeable row of chips instead of four ragged rows. */
+  .categories {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    padding-bottom: 6px
+  }
+
+  .categories::-webkit-scrollbar {
+    display: none
+  }
+
+  .categories a {
+    flex: none;
+    scroll-snap-align: start;
+    border-color: #b8c3d3
+  }
+
+  /* Menu: the links are a fixed 48px each, so the Login/Register panel can start exactly
+     where they end. The old offset (174px) was shorter than the link list and hid them. */
+  .menu-toggle+nav.open {
+    z-index: 30;
+    padding: 8px 16px 0;
+    border-bottom: 0
+  }
+
+  .menu-toggle+nav.open a {
+    display: flex;
+    align-items: center;
+    height: 48px;
+    padding: 0 12px
+  }
+
+  /* Signed-in row (Post + account) sat at the same too-high offset; an earlier rule uses !important. */
+  .account-actions.open {
+    top: 216px !important;
+    z-index: 29
+  }
+
+  .nav-actions.open:not(.account-actions) {
+    top: 216px;
+    z-index: 29;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px 16px 18px;
+    box-shadow: 0 14px 24px #16234a1f
+  }
+}

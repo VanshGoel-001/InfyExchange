@@ -16,7 +16,8 @@ export function Logo() {
         <b>
           <em>Infy</em>Exchange
         </b>
-        <small>Buy · Rent · Lend · Give · Within Our Community</small>
+        {/* Non-breaking spaces keep "Within Our Community" together when the tagline wraps on phones. */}
+        <small>Buy · Rent · Lend · Give ·{" "}Within{" "}Our{" "}Community</small>
       </span>
     </Link>
   );
