@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:4200"
     allowed_email_domains: str = "gmail.com"
 
+    # OAuth client ID (public, not a secret) of the Google Sign-In web client.
+    # Empty disables "Sign in with Google": the endpoint answers 503.
+    google_client_id: str = ""
+
     # --- Security headers ---
     referrer_policy: str = "strict-origin-when-cross-origin"
     permissions_policy: str = "camera=(), microphone=(), geolocation=(), payment=()"

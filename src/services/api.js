@@ -1,32 +1,49 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
 export class ApiError extends Error {
-  constructor(message, status, details = null) {
+  constructor(message, status, details = null, fields = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.details = details;
+    // Per-field problems, e.g. { price: 'Input should be a valid integer' }.
+    this.fields = fields;
   }
 }
 
-/**
- * Format FastAPI/Pydantic validation errors into clean user-facing error text.
- */
-function parseErrorMessage(data) {
-  if (!data) return 'Request failed';
-  const detail = data.detail;
-  if (!detail) return data.message || 'Request failed';
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((e) => {
-        const field = Array.isArray(e?.loc) ? e.loc.filter((part) => part !== 'body').join('.') : '';
-        return field ? `${field}: ${e.msg}` : e?.msg;
-      })
-      .filter(Boolean);
-    return messages.join('; ') || 'Validation failed';
+const NETWORK_MESSAGE = 'Could not reach InfyExchange. Check your internet connection and try again.';
+const SERVER_MESSAGE = 'Something went wrong on our side. Please try again in a moment.';
+
+// The backend answers validation failures with either one "field: message" string or a list of them.
+// FastAPI's own shape (a list of { loc, msg } objects) is handled too.
+function readValidationItem(item) {
+  if (typeof item === 'string') {
+    const match = item.match(/^([a-z_][a-z0-9_.]*): (.+)$/i);
+    return match ? [match[1], match[2]] : [null, item];
   }
-  return 'Request failed';
+  const field = Array.isArray(item?.loc) ? item.loc.filter((part) => part !== 'body').join('.') : '';
+  return [field || null, item?.msg];
+}
+
+/** Turn an error response body into user-facing text plus a per-field map. */
+function parseError(data, status) {
+  const detail = data?.detail;
+  // 503 is how the API says "this optional feature is off" (e.g. Google sign-in); its text is meant for people.
+  if (status >= 500 && !(status === 503 && typeof detail === 'string')) return { message: SERVER_MESSAGE, fields: {} };
+  if (!detail) return { message: data?.message || 'The request could not be completed.', fields: {} };
+  if (typeof detail === 'string' && status !== 422) return { message: detail, fields: {} };
+
+  const items = Array.isArray(detail) ? detail : [detail];
+  const fields = {};
+  const messages = [];
+  for (const item of items) {
+    const [field, text] = readValidationItem(item);
+    if (!text) continue;
+    const clean = String(text).replace(/^Value error, /, '');
+    if (field && !fields[field]) fields[field] = clean;
+    messages.push(field ? `${field}: ${clean}` : clean);
+  }
+  return { message: messages.join('; ') || 'Please check the details you entered.', fields };
 }
 
 /**
@@ -59,16 +76,19 @@ export async function request(path, { token, body, headers, retries = 0, ...opti
         }
 
         const data = await response.json().catch(() => ({}));
-        throw new ApiError(parseErrorMessage(data), response.status, data);
+        const { message, fields } = parseError(data, response.status);
+        throw new ApiError(message, response.status, data, fields);
       }
 
       return response.status === 204 ? null : response.json();
     } catch (err) {
+      const offline = err.name === 'TypeError' || err.message === 'Failed to fetch';
       // Retry idempotently on transient network connection drops (up to retries count)
-      if (attempt < retries && (err.name === 'TypeError' || err.message === 'Failed to fetch')) {
+      if (attempt < retries && offline) {
         await new Promise((res) => setTimeout(res, 500 * Math.pow(2, attempt)));
         return executeRequest(attempt + 1);
       }
+      if (offline) throw new ApiError(NETWORK_MESSAGE, 0);
       throw err;
     }
   };
@@ -80,7 +100,12 @@ export const api = {
   // Auth
   register: (data) => request('/auth/register', { method: 'POST', body: data }),
   login: (data) => request('/auth/login', { method: 'POST', body: data }),
+  googleLogin: (credential) => request('/auth/google', { method: 'POST', body: { credential } }),
   me: (token) => request('/auth/me', { token, retries: 1 }),
+
+  // Profile
+  completeProfile: (body, token) => request('/users/me/complete-profile', { method: 'POST', body, token }),
+  updateProfile: (body, token) => request('/users/me', { method: 'PATCH', body, token }),
 
   // Listings
   listings: (query) => request(`/listings${query ? `?${new URLSearchParams(query)}` : ''}`, { retries: 1 }),

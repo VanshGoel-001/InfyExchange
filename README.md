@@ -38,7 +38,7 @@ Copy-Item .env.example .env
 # Set SECRET_KEY and the CLOUDINARY_* values in .env.
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # runtime + test/security tooling; the image uses requirements.txt only
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -61,24 +61,12 @@ Set `VITE_API_BASE_URL` in the Cloudflare Pages project settings to the API orig
 
 ## Deploy
 
-The `deploy/neon-cloudrun-cloudflare-pages` branch runs CI before sequential Cloud Run and Cloudflare Pages deployments. The release image is scanned and deployed by digest. Configure Workload Identity Federation and the `neon-staging` GitHub environment; grant the deploy account least-privilege Artifact Registry and Cloud Run permissions, and grant the runtime account access to the six secrets listed above. Configure these repository or environment values:
+The `deploy/neon-cloudrun-cloudflare-pages` branch runs CI before sequential Cloud Run and Cloudflare Pages deployments. The release image is scanned and deployed by digest. Configure Workload Identity Federation and the `neon-staging` GitHub environment; grant the deploy account least-privilege Artifact Registry and Cloud Run permissions, and grant the runtime account access to the six secrets listed above.
 
-| Name | Type | Purpose |
-| --- | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Variable | Cloudflare account identifier |
-| `CLOUDFLARE_PAGES_PROJECT` | Variable | Pages project name |
-| `VITE_API_BASE_URL` | Variable | Cloud Run service URL ending in `/api` |
-| `CLOUDFLARE_API_TOKEN` | Secret | Token with permission to deploy Pages |
-| `GCP_PROJECT_ID` | Variable | Google Cloud project ID |
-| `GCP_REGION` | Variable | Cloud Run region |
-| `CLOUD_RUN_SERVICE` | Variable | Cloud Run service name |
-| `ARTIFACT_REGISTRY_REPOSITORY` | Variable | Pre-created Docker repository in Artifact Registry |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Variable | Full Workload Identity Provider resource name |
-| `GCP_DEPLOY_SERVICE_ACCOUNT` | Variable | GitHub deployment service account email |
-| `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | Variable | Cloud Run runtime service account email |
-| `CORS_ORIGINS` | Variable | Exact Pages origin allowed by the API |
+The full list of GitHub variables and secrets (Google Cloud, Cloudflare, `VITE_API_BASE_URL`, `CORS_ORIGINS`) and the Secret Manager mapping is in the [wiki Configuration Reference](wiki/Configuration-Reference.md#github-actions-variables-and-secrets).
 
 Create the Cloud Run service and Artifact Registry repository once. Set `VITE_API_BASE_URL` to the service URL plus `/api`. Configure reviewer approval and branch restrictions on `neon-staging`; see [the operations runbook](docs/security/SECURITY_RUNBOOK.md).
+
 ## Verify
 
 Run the frontend checks from the repository root:

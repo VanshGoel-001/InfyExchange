@@ -27,12 +27,12 @@ export class ErrorBoundary extends Component {
           <Header />
           <main className="wide" style={{ textAlign: 'center', padding: '60px 20px' }}>
             <div className="panel" style={{ maxWidth: '600px', margin: '0 auto', padding: '30px' }}>
-              <span style={{ fontSize: '48px', display: 'block', marginBottom: '16px' }}>⚠️</span>
               <h2>Something went wrong</h2>
               <p style={{ color: '#566276', margin: '14px 0 24px', lineHeight: 1.5 }}>
-                An unexpected UI rendering error occurred. The application state has been preserved safely.
+                This page hit a problem. Reloading usually fixes it. If it keeps happening, please tell an admin.
               </p>
-              {this.state.error?.message && (
+              {/* The technical message is for developers; people do not need it. */}
+              {import.meta.env.DEV && this.state.error?.message && (
                 <pre
                   style={{
                     background: '#f8fafc',
@@ -49,7 +49,7 @@ export class ErrorBoundary extends Component {
                 </pre>
               )}
               <button className="primary" onClick={this.handleReload}>
-                ⌁ Reload Application
+                Reload the page
               </button>
             </div>
           </main>

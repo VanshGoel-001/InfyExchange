@@ -4,23 +4,7 @@ Use isolated local or staging data. Do not run destructive or load tests against
 
 ## Automated checks
 
-Run from the repository root:
-
-```powershell
-npm ci
-npm audit --audit-level=high
-npm run build
-```
-
-Run from `backend/`:
-
-```powershell
-python -m pytest -q
-python -m bandit -r app -q
-python -m pip_audit -r requirements.txt --progress-spinner off
-```
-
-CI also validates local Compose configuration and builds the API container. The Cloud Run deployment workflow runs only after CI passes on a push to `main`; the Pages workflow follows a successful API deployment.
+The frontend and backend commands (`npm audit`, `npm run build`, `pytest`, Bandit, `pip-audit`) are listed in the [README](../../README.md#verify); the test inventory is in the [wiki](../../wiki/Testing.md). CI also validates local Compose configuration and builds the API container. The Cloud Run deployment workflow runs only after CI passes on a push to `deploy/neon-cloudrun-cloudflare-pages`; the Pages workflow follows a successful API deployment.
 
 ## Deployment checks
 

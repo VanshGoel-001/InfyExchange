@@ -29,6 +29,4 @@
 
 Application records are stored in Neon. Enable backup and point-in-time recovery according to the selected Neon plan. Listing images are stored in Cloudinary. Verify database and media recovery procedures before launch.
 
-## Runtime notes
-
-The Cloud Run container listens on the platform-provided `PORT`. Runtime secrets are read from Secret Manager. Alembic migrations run on startup and use a PostgreSQL advisory lock to serialize concurrent starts. Rate-limit counters are process-local and are not shared across Cloud Run instances.
+Runtime behaviour (ports, migrations, rate-limit scope) is described in the [wiki](../../wiki/Architecture.md).

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_complete_user, get_current_user
 from app.models.need import Need
 from app.models.user import User
 from app.schemas.need import NeedCreate, NeedResponse
@@ -58,7 +58,7 @@ def _serialize_need(need: Need) -> dict:
 def create_need(
     data: NeedCreate,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_complete_user),
     db: Session = Depends(get_db),
 ):
 

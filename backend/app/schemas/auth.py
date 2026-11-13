@@ -42,6 +42,11 @@ class LoginRequest(BaseModel):
     password: str = Field(max_length=100)
 
 
+class GoogleLoginRequest(BaseModel):
+    # The ID token (a JWT) returned by Google Sign-In.
+    credential: str = Field(min_length=1, max_length=4096)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

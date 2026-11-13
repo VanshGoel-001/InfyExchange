@@ -45,20 +45,26 @@ const CSP_ENFORCE = false;
 // bundle (runbook §5.3). Generated instead of hand-written so the CSP can never
 // drift from the origin the bundle actually calls: one source of truth, no
 // placeholder left behind in dist/ to silently break the app when CSP is enforced.
-function buildSpaHeaders(apiBase) {
+function buildSpaHeaders(apiBase, googleSignIn) {
   const apiOrigin = /^https?:\/\//.test(apiBase) ? new URL(apiBase).origin : null;
+
+  // Google Sign-In loads one script, draws its button in an iframe and calls back to
+  // accounts.google.com. These sources are allowed only when a client ID is configured,
+  // so a build without Google keeps the tighter policy.
+  const GSI = 'https://accounts.google.com/gsi/';
 
   const csp = [
     "default-src 'self'",
-    "script-src 'self'",
+    `script-src 'self'${googleSignIn ? ` ${GSI}client` : ''}`,
     // No 'unsafe-inline': React assigns style props through the CSSOM, which CSP
     // does not gate, and `vite build` emits an external stylesheet, no <style>.
-    "style-src 'self' https://fonts.googleapis.com",
+    `style-src 'self' https://fonts.googleapis.com${googleSignIn ? ` ${GSI}style` : ''}`,
     "font-src 'self' https://fonts.gstatic.com",
     // data: = Vite's inlined assets; Cloudinary = every listing image (secure_url).
     "img-src 'self' data: https://res.cloudinary.com",
     // A relative base ('/api') is same-origin, so 'self' already covers it.
-    ['connect-src', "'self'", ...(apiOrigin ? [apiOrigin] : [])].join(' '),
+    ['connect-src', "'self'", ...(apiOrigin ? [apiOrigin] : []), ...(googleSignIn ? [GSI] : [])].join(' '),
+    ...(googleSignIn ? [`frame-src ${GSI}`] : []),
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -94,7 +100,7 @@ function buildSpaHeaders(apiBase) {
   ].join('\n');
 }
 
-function spaHeaders(apiBase) {
+function spaHeaders(apiBase, googleSignIn) {
   let root = process.cwd();
   let outDir = 'dist';
 
@@ -106,7 +112,7 @@ function spaHeaders(apiBase) {
       outDir = config.build.outDir;
     },
     writeBundle() {
-      writeFileSync(resolve(root, outDir, '_headers'), buildSpaHeaders(apiBase), 'utf8');
+      writeFileSync(resolve(root, outDir, '_headers'), buildSpaHeaders(apiBase, googleSignIn), 'utf8');
     },
   };
 }
@@ -116,9 +122,12 @@ export default defineConfig(({mode}) => {
   const apiBase =
     loadEnv(mode, process.cwd()).VITE_API_BASE_URL ?? process.env.VITE_API_BASE_URL ?? '';
   validateApiBase(apiBase, mode);
+  const googleSignIn = Boolean(
+    loadEnv(mode, process.cwd()).VITE_GOOGLE_CLIENT_ID ?? process.env.VITE_GOOGLE_CLIENT_ID
+  );
 
   return {
-    plugins: [react(), spaHeaders(apiBase)],
+    plugins: [react(), spaHeaders(apiBase, googleSignIn)],
     server: { proxy: { '/api': 'http://127.0.0.1:8000' } },
   };
 });

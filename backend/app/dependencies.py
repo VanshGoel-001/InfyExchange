@@ -51,6 +51,18 @@ def get_current_user(
     return user
 
 
+def get_complete_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """For actions that need contact details on file (posting, showing interest)."""
+    if not current_user.profile_complete:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please complete your profile first.",
+        )
+    return current_user
+
+
 def get_current_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:

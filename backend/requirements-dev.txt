@@ -1,0 +1,10 @@
+# Development, test and security tooling (CI installs this file; it includes the
+# runtime set). The production image installs requirements.txt only.
+-r requirements.txt
+
+setuptools==84.2.1
+pytest==9.1.1
+httpx==0.28.1
+pytest-cov==7.1.0
+bandit==1.9.4
+pip-audit==2.10.1

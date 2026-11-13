@@ -1,73 +1,69 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeftRight, CircleCheck, IndianRupee, MapPin, Sparkles, Tag } from 'lucide-react';
 import { Header } from '../components/Layout';
-import { Banner } from '../components/Ui';
+import { Banner, Field, Flash, FormError, Pill } from '../components/Ui';
 import { ProductCard } from '../components/Cards';
 import { SkeletonCard } from '../components/ErrorBoundary';
 import { api } from '../services/api';
 import { applyClientFilters } from '../utils/filters';
+import {
+  CATEGORIES,
+  CONDITIONS,
+  LISTING_STATUSES,
+  LISTING_TYPES,
+  ROLES,
+  formatDate,
+  formatPrice,
+  initials,
+  labelOf,
+  toneOf,
+} from '../utils/labels';
+import { LIMITS, validateInterest } from '../utils/validate';
 import { useAuth } from '../context/AuthContext';
-
-const CATEGORIES = [
-  'BADMINTON',
-  'TABLE_TENNIS',
-  'POOL_SNOOKER',
-  'SQUASH',
-  'TENNIS',
-  'CRICKET',
-  'FOOTBALL',
-  'BASKETBALL',
-  'OTHER',
-];
-
-const LISTING_TYPES = ['SELL', 'RENT', 'LEND', 'GIVEAWAY'];
-const CONDITIONS = ['NEW', 'LIKE_NEW', 'GOOD', 'FAIR', 'POOR'];
+import { useForm } from '../hooks/useForm';
 
 function Filters({ filters, setFilters, apply, clear }) {
   const change = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
+  const priceRangeWrong =
+    filters.min_price !== '' && filters.max_price !== '' && Number(filters.min_price) > Number(filters.max_price);
 
   return (
     <form
       className="filters"
       onSubmit={(e) => {
         e.preventDefault();
-        apply();
+        if (!priceRangeWrong) apply();
       }}
     >
-      <b>⚱ Filters</b>
-      <button type="button" className="filter-clear" onClick={clear}>
-        Clear All
-      </button>
+      <div className="filters-head">
+        <b>Filters</b>
+        <button type="button" className="filter-clear" onClick={clear}>
+          Clear all
+        </button>
+      </div>
 
       <label>
         Search
-        <input
-          value={filters.search}
-          onChange={(e) => change('search', e.target.value)}
-          placeholder="Search items by name"
-        />
+        <input value={filters.search} onChange={(e) => change('search', e.target.value)} placeholder="Search by item name" />
       </label>
 
       <label>
         Category
         <select value={filters.category} onChange={(e) => change('category', e.target.value)}>
-          <option value="">All Categories</option>
+          <option value="">All categories</option>
           {CATEGORIES.map((x) => (
-            <option key={x} value={x}>
-              {x.replace('_', ' ')}
-            </option>
+            <option key={x.value} value={x.value}>{x.label}</option>
           ))}
         </select>
       </label>
 
       <label>
-        Listing Type
+        What is on offer
         <select value={filters.listing_type} onChange={(e) => change('listing_type', e.target.value)}>
-          <option value="">All Types</option>
+          <option value="">Anything</option>
           {LISTING_TYPES.map((x) => (
-            <option key={x} value={x}>
-              {x}
-            </option>
+            <option key={x.value} value={x.value}>{x.label}</option>
           ))}
         </select>
       </label>
@@ -75,43 +71,45 @@ function Filters({ filters, setFilters, apply, clear }) {
       <label>
         Condition
         <select value={filters.condition} onChange={(e) => change('condition', e.target.value)}>
-          <option value="">All Conditions</option>
+          <option value="">Any condition</option>
           {CONDITIONS.map((x) => (
-            <option key={x} value={x}>
-              {x.replace('_', ' ')}
-            </option>
+            <option key={x.value} value={x.value}>{x.label}</option>
           ))}
         </select>
       </label>
 
       <label>
         Location
-        <input
-          value={filters.location}
-          onChange={(e) => change('location', e.target.value)}
-          placeholder="e.g. ECC, FC"
-        />
+        <input value={filters.location} onChange={(e) => change('location', e.target.value)} placeholder="e.g. ECC, Food Court" />
       </label>
 
-      <div className="inline">
-        <input
-          type="number"
-          min="0"
-          value={filters.min_price}
-          onChange={(e) => change('min_price', e.target.value)}
-          placeholder="Min ₹"
-        />
-        <input
-          type="number"
-          min="0"
-          value={filters.max_price}
-          onChange={(e) => change('max_price', e.target.value)}
-          placeholder="Max ₹"
-        />
-      </div>
+      <fieldset className="price-range">
+        <legend>Price (₹)</legend>
+        <div className="inline">
+          <input
+            type="number"
+            min="0"
+            inputMode="numeric"
+            aria-label="Minimum price"
+            value={filters.min_price}
+            onChange={(e) => change('min_price', e.target.value)}
+            placeholder="From"
+          />
+          <input
+            type="number"
+            min="0"
+            inputMode="numeric"
+            aria-label="Maximum price"
+            value={filters.max_price}
+            onChange={(e) => change('max_price', e.target.value)}
+            placeholder="To"
+          />
+        </div>
+        {priceRangeWrong && <small className="field-error" role="alert">“From” must not be higher than “To”.</small>}
+      </fieldset>
 
-      <button type="submit" className="primary">
-        Apply Filters
+      <button type="submit" className="primary" disabled={priceRangeWrong}>
+        Show results
       </button>
     </form>
   );
@@ -169,6 +167,8 @@ export function ListingsPage() {
     setParams(mine ? { scope: 'mine' } : {});
   };
 
+  const filtered = Object.keys(Object.fromEntries(params.entries())).some((key) => key !== 'scope');
+
   return (
     <>
       <Header />
@@ -176,21 +176,23 @@ export function ListingsPage() {
         <Filters filters={filters} setFilters={setFilters} apply={apply} clear={clear} />
         <main>
           <Banner
-            title={mine ? 'My Listings' : 'Browse Listings'}
+            title={mine ? 'My items' : 'Browse items'}
             subtitle={
               mine
-                ? 'Items you have posted to InfyExchange.'
-                : 'Find items from fellow trainees. Buy, rent, lend or give within our community.'
+                ? 'Items you have posted on InfyExchange.'
+                : 'Find sports gear from fellow trainees: buy it, rent it, borrow it, or get it free.'
             }
           />
           {mine && (
             <p className="scope-note">
-              Showing items posted by you. <Link to="/listings">Browse all community listings</Link>
+              Showing only items you posted. <Link to="/listings">See everything</Link>
             </p>
           )}
 
           <div className="listing-toolbar">
-            <h2>{items.length} {mine ? 'My Listings' : 'Listings Found'}</h2>
+            <h2>
+              {loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'item' : 'items'}${filtered ? ' match your filters' : ''}`}
+            </h2>
           </div>
 
           {loading ? (
@@ -208,9 +210,21 @@ export function ListingsPage() {
           )}
 
           {!loading && !items.length && (
-            <p className="empty">
-              {error || (mine ? 'You have not posted any listings yet.' : 'No active listings found matching your criteria.')}
-            </p>
+            <div className="empty-block">
+              {error ? (
+                <p role="alert" className="error">{error}</p>
+              ) : filtered ? (
+                <>
+                  <p>Nothing matches those filters.</p>
+                  <button type="button" className="outline" onClick={clear}>Clear filters</button>
+                </>
+              ) : (
+                <>
+                  <p>{mine ? 'You have not posted anything yet.' : 'No items have been posted yet.'}</p>
+                  <Link className="primary" to="/listings/new">Post an item</Link>
+                </>
+              )}
+            </div>
           )}
         </main>
       </div>
@@ -218,18 +232,96 @@ export function ListingsPage() {
   );
 }
 
+function InterestPanel({ item, id }) {
+  const navigate = useNavigate();
+  const { token, user } = useAuth();
+  const [sent, setSent] = useState(false);
+  const form = useForm({ message: '' }, validateInterest, ['message']);
+  const { bind, values, error } = form;
+
+  const send = form.handleSubmit(async () => {
+    await api.createInterest(id, { message: values.message.trim() }, token);
+    setSent(true);
+  });
+
+  if (user?.id === item.owner_id) {
+    return (
+      <div className="interest">
+        <h2>This is your item</h2>
+        <p>Enquiries from other trainees appear under “Enquiries”.</p>
+        <Link className="primary" to="/activity">See enquiries</Link>
+      </div>
+    );
+  }
+
+  if (item.status !== 'ACTIVE') {
+    return (
+      <div className="interest">
+        <h2>No longer available</h2>
+        <p>This item is marked as {labelOf(LISTING_STATUSES, item.status).toLowerCase()}.</p>
+        <Link className="primary" to="/listings">Browse other items</Link>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return (
+      <div className="interest">
+        <h2>Interested in this item?</h2>
+        <p>Log in to send {item.owner_name?.split(' ')[0] || 'the owner'} an enquiry. It only takes a moment.</p>
+        <button className="primary" onClick={() => navigate('/login')}>Log in to continue</button>
+        <p className="aside-link">New here? <Link to="/register">Create an account</Link></p>
+      </div>
+    );
+  }
+
+  if (user && !user.profile_complete) {
+    return (
+      <div className="interest">
+        <h2>Finish your profile first</h2>
+        <p>We need your phone number and role before you can enquire about items.</p>
+        <Link className="primary" to="/complete-profile">Finish profile</Link>
+      </div>
+    );
+  }
+
+  if (sent) {
+    return (
+      <div className="interest">
+        <h2>Enquiry sent</h2>
+        <p>
+          {item.owner_name?.split(' ')[0] || 'The owner'} will see it under “Enquiries”. If they accept,
+          their contact details unlock for you on that page.
+        </p>
+        <Link className="outline" to="/activity">See my enquiries</Link>
+      </div>
+    );
+  }
+
+  return (
+    <form className="interest" onSubmit={send} noValidate>
+      <h2>Interested in this item?</h2>
+      <Field label="Message to the owner, optional" error={error('message')} hint={`${values.message.trim().length} / ${LIMITS.message[1]}`}>
+        <textarea {...bind('message')} maxLength={LIMITS.message[1]} placeholder="e.g. Is it still available? Can I pick it up this evening?" />
+      </Field>
+      <FormError>{form.formError}</FormError>
+      <button className="primary" disabled={form.busy} aria-busy={form.busy}>
+        {form.busy ? 'Sending…' : 'Send enquiry'}
+      </button>
+    </form>
+  );
+}
+
 export function DetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { token, user } = useAuth();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
   const [notice, setNotice] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     setLoading(true);
+    setNotice('');
     api
       .listing(id)
       .then(setItem)
@@ -242,7 +334,7 @@ export function DetailPage() {
       <>
         <Header />
         <main className="wide detail">
-          <p className="page-status">Loading item details…</p>
+          <p className="page-status">Loading item…</p>
         </main>
       </>
     );
@@ -254,51 +346,33 @@ export function DetailPage() {
         <Header />
         <main className="wide detail">
           <p role="alert" className="error">
-            {notice || 'Listing not found or no longer active.'}
+            {notice || 'This item could not be found. It may have been removed.'}
           </p>
           <button className="primary" onClick={() => navigate('/listings')}>
-            ← Back to listings
+            Back to all items
           </button>
         </main>
       </>
     );
   }
 
-  const own = user?.id === item.owner_id;
-
-  const send = async () => {
-    if (!token) return navigate('/login');
-    setSubmitting(true);
-    try {
-      await api.createInterest(id, { message: message.trim() }, token);
-      setNotice('Interest sent to the owner! You will be notified when they respond.');
-      setMessage('');
-    } catch (e) {
-      setNotice(e.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const specs = [
-    ['🏸', 'Category', item.category],
-    ['🏷️', 'Type', item.listing_type],
-    ['⚙', 'Condition', item.condition],
-    ['₹', 'Price', item.price > 0 ? `₹${item.price}${item.price_unit ? `/${item.price_unit}` : ''}` : 'Free'],
-    ['⌖', 'Location', item.location],
-    ['◷', 'Status', item.status],
+    [Tag, 'Category', labelOf(CATEGORIES, item.category)],
+    [ArrowLeftRight, 'On offer as', labelOf(LISTING_TYPES, item.listing_type)],
+    [Sparkles, 'Condition', labelOf(CONDITIONS, item.condition)],
+    [IndianRupee, 'Price', formatPrice(item.price, item.price_unit)],
+    [MapPin, 'Pickup location', item.location],
+    [CircleCheck, 'Availability', labelOf(LISTING_STATUSES, item.status)],
   ];
 
   return (
     <>
       <Header />
       <main className="wide detail">
+        <Flash />
         <button className="back-link" onClick={() => navigate(-1)}>
-          ← Back to listings
+          ← Back
         </button>
-        <p className="crumb">
-          Home › Listings › {item.title}
-        </p>
 
         <div className="detail-grid">
           <section>
@@ -306,27 +380,27 @@ export function DetailPage() {
               {item.images?.[0]?.image_url ? (
                 <img src={item.images[0].image_url} alt={item.title} />
               ) : (
-                <span className="no-image">No image uploaded</span>
+                <span className="no-image">No photo added</span>
               )}
             </div>
             <div className="panel description">
-              <h2>▤ Description</h2>
+              <h2>Description</h2>
               <p>{item.description}</p>
             </div>
           </section>
 
           <section className="item-info">
-            <label className="blue">{item.listing_type}</label>
+            <Pill tone={toneOf(LISTING_TYPES, item.listing_type)}>{labelOf(LISTING_TYPES, item.listing_type)}</Pill>
             <h1>{item.title}</h1>
-            <strong>{item.price > 0 ? `₹${item.price}` : 'Free'}</strong>
-            <p>Posted {new Date(item.created_at).toLocaleDateString()}</p>
+            <strong>{formatPrice(item.price, item.price_unit)}</strong>
+            <p>Posted {formatDate(item.created_at)}</p>
             <div className="specs">
-              {specs.map((x) => (
-                <span key={x[1]}>
-                  {x[0]}
+              {specs.map(([Icon, name, value]) => (
+                <span key={name}>
+                  <Icon aria-hidden="true" />
                   <b>
-                    {x[1]}
-                    <small>{String(x[2]).replaceAll('_', ' ')}</small>
+                    {name}
+                    <small>{value}</small>
                   </b>
                 </span>
               ))}
@@ -336,31 +410,14 @@ export function DetailPage() {
           <aside>
             <div className="panel posted">
               <h3>Posted by</h3>
-              <div className="large-avatar tiny">{item.owner_name?.slice(0, 2).toUpperCase()}</div>
+              <div className="large-avatar tiny">{initials(item.owner_name)}</div>
               <b>
                 {item.owner_name}
-                <small>{item.owner_role}</small>
+                <small>{labelOf(ROLES, item.owner_role)}</small>
               </b>
             </div>
 
-            {!own && (
-              <div className="interest">
-                <h2>Interested in this item?</h2>
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Hi, I'm interested in this item. Is it still available?"
-                />
-                <button className="primary" disabled={submitting} onClick={send}>
-                  {submitting ? 'Sending…' : token ? '⌁ I’m Interested' : 'Login to show interest'}
-                </button>
-                {notice && (
-                  <p style={{ marginTop: 10, color: notice.includes('sent') ? '#0ba573' : '#c3283e' }}>
-                    {notice}
-                  </p>
-                )}
-              </div>
-            )}
+            <InterestPanel item={item} id={id} />
           </aside>
         </div>
       </main>

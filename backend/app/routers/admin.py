@@ -1,9 +1,9 @@
 import json
 import logging
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -15,9 +15,8 @@ from app.models.interest import Interest
 from app.models.listing import Listing
 from app.models.need import Need
 from app.models.user import User
-from app.schemas.user import UserResponse
 from app.services.rate_limit import admin_limiter, rate_limit_dependency
-from app.utils.enums import InterestStatus, ListingStatus, NeedStatus, UserRole
+from app.utils.enums import InterestStatus, ListingStatus, NeedStatus
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +149,7 @@ def get_all_users(
                 "role": u.role,
                 "is_admin": u.is_admin,
                 "is_active": u.is_active,
-                "joining_date": str(u.joining_date),
+                "joining_date": str(u.joining_date) if u.joining_date else None,
                 "created_at": u.created_at,
             }
             for u in users

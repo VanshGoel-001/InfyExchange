@@ -1,330 +1,260 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { X } from 'lucide-react';
 import { Header } from '../components/Layout';
-import { Banner, TipBox } from '../components/Ui';
-import { api } from '../services/api';
+import { Banner, Field, FormError, TipBox } from '../components/Ui';
 import { useAuth } from '../context/AuthContext';
+import { useForm } from '../hooks/useForm';
+import { api } from '../services/api';
+import { CATEGORIES, CONDITIONS, LISTING_TYPES, NEED_TYPES, RENT_UNITS } from '../utils/labels';
+import { IMAGE_TYPES, LIMITS, validateListing, validateNeed } from '../utils/validate';
 
-const CATEGORIES = [
-  'BADMINTON',
-  'TABLE_TENNIS',
-  'POOL_SNOOKER',
-  'SQUASH',
-  'TENNIS',
-  'CRICKET',
-  'FOOTBALL',
-  'BASKETBALL',
-  'OTHER',
-];
+const LISTING_FIELDS = ['title', 'category', 'listing_type', 'price', 'price_unit', 'condition', 'location', 'description', 'images'];
+const NEED_FIELDS = ['title', 'category', 'need_type', 'budget', 'duration', 'location', 'description'];
 
-const ITEM_CONDITIONS = ['NEW', 'LIKE_NEW', 'GOOD', 'FAIR', 'POOR'];
-const LISTING_TYPES = ['SELL', 'RENT', 'LEND', 'GIVEAWAY'];
-const NEED_TYPES = ['BUY', 'RENT', 'BORROW'];
-const RENT_UNITS = ['day', 'week', 'month', 'hour'];
+const size = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
+
+// Radio group drawn as buttons: the choice is always visible and one tap changes it.
+function ChoiceGroup({ legend, name, options, value, onChange }) {
+  const labelId = useId();
+  return (
+    <div className="options" role="radiogroup" aria-labelledby={labelId}>
+      <span className="field-label" id={labelId}>{legend}</span>
+      <div className="option-row">
+        {options.map((option) => (
+          <label key={option.value} className={`option${value === option.value ? ' selected' : ''}`}>
+            <input type="radio" name={name} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
+            {option.verb}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function PostingPage({ need = false }) {
   const navigate = useNavigate();
   const { token } = useAuth();
-  const title = need ? 'Post a Need' : 'Post a Listing';
-
-  const [form, setForm] = useState({
-    title: '',
-    category: 'BADMINTON',
-    listing_type: 'SELL',
-    need_type: 'BUY',
-    price: '',
-    price_unit: 'day',
-    condition: 'GOOD',
-    duration: '',
-    budget: '',
-    location: 'ECC',
-    description: '',
-    images: [],
-  });
-
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const submitLock = useRef(false);
   const abortRef = useRef(null);
 
-  const setField = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const form = useForm(
+    {
+      title: '',
+      category: '',
+      listing_type: 'SELL',
+      need_type: 'BUY',
+      price: '',
+      price_unit: 'day',
+      condition: '',
+      duration: '',
+      budget: '',
+      location: '',
+      description: '',
+      images: [],
+    },
+    // Extra rules that depend on the whole form, on top of the shared length/number checks.
+    (v) => ({
+      ...(need ? validateNeed(v) : validateListing(v)),
+      ...(v.category ? {} : { category: 'Choose a category.' }),
+      ...(!need && !v.condition ? { condition: 'Choose the item’s condition.' } : {}),
+    }),
+    need ? NEED_FIELDS : LISTING_FIELDS
+  );
+  const { values, bind, set, error } = form;
 
-  useEffect(() => {
-    return () => abortRef.current?.abort();
-  }, []);
+  const isPaid = ['SELL', 'RENT'].includes(values.listing_type);
+  const isRent = values.listing_type === 'RENT';
+  const needsDuration = need && values.need_type !== 'BUY';
 
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Warn before leaving only while a post is actually being sent.
   useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (submitLock.current) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
+    if (!form.busy) return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [form.busy]);
 
-  const isPaid = ['SELL', 'RENT'].includes(form.listing_type);
-  const isRent = form.listing_type === 'RENT';
-
-  const validateForm = () => {
-    const trimmedTitle = form.title.trim();
-    if (trimmedTitle.length < 2 || trimmedTitle.length > 150) {
-      throw new Error('Title must be between 2 and 150 characters.');
-    }
-
-    const trimmedLocation = form.location.trim();
-    if (trimmedLocation.length < 2 || trimmedLocation.length > 100) {
-      throw new Error('Location must be between 2 and 100 characters.');
-    }
-
-    const trimmedDesc = form.description.trim();
-    if (trimmedDesc.length < 2 || trimmedDesc.length > 2000) {
-      throw new Error('Description must be between 2 and 2000 characters.');
-    }
-
-    if (!need) {
-      if (isPaid) {
-        const numPrice = Number(form.price);
-        if (!Number.isFinite(numPrice) || numPrice <= 0) {
-          throw new Error('Please enter a valid price greater than zero.');
-        }
-      }
-      if (form.images.length > 5) {
-        throw new Error('You can upload a maximum of 5 images.');
-      }
-      for (const file of form.images) {
-        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-          throw new Error(`File "${file.name}" is not a valid format. Only JPEG, PNG, and WebP are supported.`);
-        }
-        if (file.size > 5 * 1024 * 1024) {
-          throw new Error(`File "${file.name}" exceeds the 5MB size limit.`);
-        }
-      }
-    } else {
-      if (form.budget && Number(form.budget) < 0) {
-        throw new Error('Budget cannot be negative.');
-      }
-    }
+  const addPhotos = (event) => {
+    const picked = Array.from(event.target.files || []);
+    event.target.value = ''; // lets the same file be picked again after removing it
+    if (picked.length) set('images', [...values.images, ...picked]);
   };
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (submitLock.current) return;
-    submitLock.current = true;
+  const submit = form.handleSubmit(async (v) => {
     abortRef.current = new AbortController();
-    setSubmitting(true);
-    setError('');
+    const { signal } = abortRef.current;
 
-    try {
-      validateForm();
-
-      if (need) {
-        await api.createNeed(
-          {
-            title: form.title.trim(),
-            category: form.category,
-            need_type: form.need_type,
-            duration: form.duration.trim() || null,
-            budget: Number(form.budget || 0),
-            location: form.location.trim(),
-            description: form.description.trim(),
-          },
-          token,
-          abortRef.current.signal
-        );
-      } else {
-        const formData = new FormData();
-        formData.append('title', form.title.trim());
-        formData.append('category', form.category);
-        formData.append('listing_type', form.listing_type);
-        formData.append('price', String(isPaid ? Number(form.price || 0) : 0));
-        if (isRent) {
-          formData.append('price_unit', form.price_unit);
-        }
-        formData.append('condition', form.condition);
-        formData.append('location', form.location.trim());
-        formData.append('description', form.description.trim());
-
-        form.images.forEach((file) => {
-          formData.append('images', file);
-        });
-
-        await api.createListing(formData, token, abortRef.current.signal);
-      }
-
-      navigate(need ? '/needs' : '/listings');
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      setError(err.message);
-    } finally {
-      submitLock.current = false;
-      abortRef.current = null;
-      setSubmitting(false);
+    if (need) {
+      await api.createNeed(
+        {
+          title: v.title.trim(),
+          category: v.category,
+          need_type: v.need_type,
+          duration: needsDuration ? v.duration.trim() || null : null,
+          budget: Number(v.budget || 0),
+          location: v.location.trim(),
+          description: v.description.trim(),
+        },
+        token,
+        signal
+      );
+      navigate('/my-needs', { state: { notice: 'Your request is posted. Other trainees can now see it.' } });
+      return;
     }
-  };
+
+    const data = new FormData();
+    data.append('title', v.title.trim());
+    data.append('category', v.category);
+    data.append('listing_type', v.listing_type);
+    data.append('price', String(isPaid ? Number(v.price) : 0));
+    if (isRent) data.append('price_unit', v.price_unit);
+    data.append('condition', v.condition);
+    data.append('location', v.location.trim());
+    data.append('description', v.description.trim());
+    v.images.forEach((file) => data.append('images', file));
+
+    const created = await api.createListing(data, token, signal);
+    navigate(`/listings/${created.id}`, { state: { notice: 'Your item is live. Other trainees can now find it.' } });
+  });
+
+  const types = need ? NEED_TYPES : LISTING_TYPES;
+  const typeKey = need ? 'need_type' : 'listing_type';
 
   return (
     <>
       <Header />
       <main className="wide">
         <Banner
-          title={title}
+          title={need ? 'Post a request' : 'Post an item'}
           subtitle={
             need
-              ? 'Tell the community what you need. Someone might have it!'
-              : 'Share something you want to sell, rent, lend or give away with fellow Infosys Mysore trainees.'
+              ? 'Tell the community what you are looking for. Someone might have it.'
+              : 'Sell, rent, lend or give away something to fellow Infosys Mysore trainees.'
           }
           kind={need ? 'need' : 'sports'}
         />
         <div className="post-layout">
           <form className="form-card" onSubmit={submit} noValidate>
-            <h2>{need ? '▤ Need Details' : 'Item Details'}</h2>
+            <h2>{need ? 'What do you need?' : 'About your item'}</h2>
 
-            <label className="form-field">
-              Item Name *
+            <Field label={need ? 'What are you looking for?' : 'Item name'} required error={error('title')}>
               <input
-                required
-                minLength="2"
-                maxLength="150"
-                value={form.title}
-                onChange={(e) => setField('title', e.target.value)}
-                placeholder="e.g. Yonex Badminton Racket"
+                {...bind('title')}
+                maxLength={LIMITS.title[1]}
+                placeholder={need ? 'e.g. Badminton racket for a week' : 'e.g. Yonex Badminton Racket'}
               />
-            </label>
+            </Field>
 
-            <div className="two">
-              <label className="form-field">
-                Category *
-                <select value={form.category} onChange={(e) => setField('category', e.target.value)}>
-                  {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat.replace('_', ' ')}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <Field label="Category" required error={error('category')}>
+              <select {...bind('category')}>
+                <option value="" disabled>Choose a category</option>
+                {CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </Field>
 
-              <label className="form-field">
-                {need ? 'Looking for *' : 'Listing Type *'}
-                <select
-                  value={need ? form.need_type : form.listing_type}
-                  onChange={(e) => setField(need ? 'need_type' : 'listing_type', e.target.value)}
-                >
-                  {(need ? NEED_TYPES : LISTING_TYPES).map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <ChoiceGroup
+              legend={need ? 'How would you like to get it?' : 'What do you want to do with it?'}
+              name={typeKey}
+              options={types}
+              value={values[typeKey]}
+              onChange={(value) => set(typeKey, value)}
+            />
 
-            <div className="two">
-              <label className="form-field">
-                {need ? 'Duration' : 'Price (₹)'}
-                <input
-                  type={need ? 'text' : 'number'}
-                  min="1"
-                  disabled={!need && !isPaid}
-                  value={need ? form.duration : form.price}
-                  onChange={(e) => setField(need ? 'duration' : 'price', e.target.value)}
-                  placeholder={need ? 'e.g. 2 weeks' : isPaid ? '₹ Amount' : '0 (Free)'}
-                  required={!need && isPaid}
-                />
-              </label>
-
-              <label className="form-field">
-                {need ? 'Budget (₹)' : isRent ? 'Duration Unit' : 'Item Condition'}
-                {need ? (
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.budget}
-                    onChange={(e) => setField('budget', e.target.value)}
-                    placeholder="Max budget"
-                  />
-                ) : isRent ? (
-                  <select value={form.price_unit} onChange={(e) => setField('price_unit', e.target.value)}>
-                    {RENT_UNITS.map((u) => (
-                      <option key={u} value={u}>
-                        Per {u}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <select value={form.condition} onChange={(e) => setField('condition', e.target.value)}>
-                    {ITEM_CONDITIONS.map((c) => (
-                      <option key={c} value={c}>
-                        {c.replace('_', ' ')}
-                      </option>
-                    ))}
-                  </select>
+            {!need && isPaid && (
+              <div className="two">
+                <Field label="Price (₹)" required error={error('price')} hint="Whole rupees, for example 500.">
+                  <input {...bind('price')} type="text" inputMode="numeric" placeholder="e.g. 500" />
+                </Field>
+                {isRent && (
+                  <Field label="Charged" required error={error('price_unit')}>
+                    <select {...bind('price_unit')}>
+                      {RENT_UNITS.map((u) => (
+                        <option key={u.value} value={u.value}>{u.label}</option>
+                      ))}
+                    </select>
+                  </Field>
                 )}
-              </label>
-            </div>
-
-            {!need && isRent && (
-              <label className="form-field">
-                Item Condition *
-                <select value={form.condition} onChange={(e) => setField('condition', e.target.value)}>
-                  {ITEM_CONDITIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {c.replace('_', ' ')}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              </div>
             )}
-
-            <label className="form-field">
-              Location *
-              <input
-                required
-                minLength="2"
-                maxLength="100"
-                value={form.location}
-                onChange={(e) => setField('location', e.target.value)}
-                placeholder="e.g. ECC 12, Food Court 2, Multiplex"
-              />
-            </label>
-
-            <label className="form-field">
-              Description *
-              <textarea
-                required
-                minLength="2"
-                maxLength="2000"
-                value={form.description}
-                onChange={(e) => setField('description', e.target.value)}
-                placeholder="Provide accurate details about item condition, specifications, or pickup arrangements."
-              />
-            </label>
+            {!need && !isPaid && <p className="form-lead">No price needed: this one is free.</p>}
 
             {!need && (
-              <label className="form-field">
-                Photos (up to 5 images, max 5MB each)
-                <input
-                  type="file"
-                  multiple
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => setField('images', Array.from(e.target.files || []))}
-                />
-              </label>
+              <Field label="Condition" required error={error('condition')}>
+                <select {...bind('condition')}>
+                  <option value="" disabled>Choose the condition</option>
+                  {CONDITIONS.map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </Field>
             )}
 
-            {error && (
-              <p role="alert" className="error">
-                {error}
-              </p>
+            {need && (
+              <div className="two">
+                <Field label="Budget (₹), optional" error={error('budget')} hint="The most you can pay. Leave empty if open.">
+                  <input {...bind('budget')} type="text" inputMode="numeric" placeholder="e.g. 300" />
+                </Field>
+                {needsDuration && (
+                  <Field label="For how long?" error={error('duration')} hint="Optional.">
+                    <input {...bind('duration')} maxLength={LIMITS.duration[1]} placeholder="e.g. 2 weeks" />
+                  </Field>
+                )}
+              </div>
             )}
 
-            <button
-              className="primary submit"
-              disabled={submitting}
-              aria-busy={submitting}
-            >
-              {submitting ? '⌁ Submitting…' : `⌁ ${need ? 'Post Need' : 'Post Listing'}`}
+            <Field label={need ? 'Where can you pick it up?' : 'Pickup location'} required error={error('location')}>
+              <input {...bind('location')} maxLength={LIMITS.location[1]} placeholder="e.g. ECC 12, Food Court 2, Multiplex" />
+            </Field>
+
+            <Field label="Description" required error={error('description')} hint={`${values.description.trim().length} / ${LIMITS.description[1]}`}>
+              <textarea
+                {...bind('description')}
+                maxLength={LIMITS.description[1]}
+                placeholder={
+                  need
+                    ? 'Describe what you need: brand, size, how you will use it.'
+                    : 'Describe the item: brand, age, any scratches or missing parts.'
+                }
+              />
+            </Field>
+
+            {!need && (
+              <Field
+                label="Photos, optional"
+                error={error('images')}
+                hint={`Up to ${LIMITS.images} pictures (JPEG, PNG or WebP), 5 MB each.`}
+              >
+                <input type="file" name="images" multiple accept={IMAGE_TYPES.join(',')} onChange={addPhotos} />
+              </Field>
+            )}
+            {!need && values.images.length > 0 && (
+              <ul className="file-list">
+                {values.images.map((file, index) => (
+                  <li key={`${file.name}-${index}`}>
+                    <span>{file.name} <small>{size(file.size)}</small></span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${file.name}`}
+                      onClick={() => set('images', values.images.filter((_, i) => i !== index))}
+                    >
+                      <X />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <FormError>{form.formError}</FormError>
+
+            <button className="primary submit" disabled={form.busy} aria-busy={form.busy}>
+              {form.busy ? 'Posting…' : need ? 'Post request' : 'Post item'}
             </button>
           </form>
 

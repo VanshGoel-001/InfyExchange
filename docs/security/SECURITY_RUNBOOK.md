@@ -8,18 +8,7 @@ This runbook covers the production deployment on Cloudflare Pages, Google Cloud 
 
 Enable Cloud Run, Artifact Registry, Secret Manager, IAM Credentials, and Security Token Service APIs. Create a Docker Artifact Registry repository before deployment. Configure Workload Identity Federation for this repository and only the `deploy/neon-cloudrun-cloudflare-pages` branch; do not create a long-lived service-account key for GitHub Actions.
 
-Set these repository or `neon-staging` environment variables for the CI deployment workflow:
-
-| Variable | Value |
-| --- | --- |
-| `GCP_PROJECT_ID` | Google Cloud project ID |
-| `GCP_REGION` | Cloud Run region |
-| `CLOUD_RUN_SERVICE` | API service name |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full workload identity provider resource name |
-| `GCP_DEPLOY_SERVICE_ACCOUNT` | CI deployer service-account email |
-| `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | Runtime service-account email |
-| `ARTIFACT_REGISTRY_REPOSITORY` | Pre-created Docker repository name |
-| `CORS_ORIGINS` | Exact Cloudflare Pages origin |
+Set the repository or `neon-staging` environment variables for the CI deployment workflow as listed in the [Configuration Reference](../../wiki/Configuration-Reference.md#github-actions-variables-and-secrets).
 
 Restrict the WIF provider condition to the exact GitHub repository and deployment branch. Grant the deployer only Artifact Registry Writer, Cloud Run deployment, and runtime service-account impersonation permissions. Grant the runtime account Secret Manager access only to the six required secrets. Set the GitHub `neon-staging` environment to require reviewer approval and allow deployments only from the dedicated branch.
 
@@ -32,16 +21,7 @@ gcloud artifacts repositories create "$ARTIFACT_REGISTRY_REPOSITORY" \
 	--project="$GCP_PROJECT_ID"
 ```
 
-Create these Secret Manager secrets:
-
-| Secret | Value |
-| --- | --- |
-| `NEON_DATABASE_URL` | Pooled Neon URL using `postgresql+psycopg://` and TLS (`sslmode=require`) |
-| `NEON_DATABASE_URL_UNPOOLED` | Direct Neon URL for Alembic migrations |
-| `SECRET_KEY` | Random JWT signing key, at least 32 random bytes |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
-| `CLOUDINARY_API_KEY` | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret |
+Create the six Secret Manager secrets mapped in the [Configuration Reference](../../wiki/Configuration-Reference.md#google-secret-manager-secrets). The Neon URLs must use the `postgresql+psycopg://` scheme with TLS (`sslmode=require`); `SECRET_KEY` must be at least 32 random bytes.
 
 Use a Neon connection string suitable for the application’s connection pattern. The runtime pool is configured for at most 5 connections per instance, with up to 3 Cloud Run instances by default.
 
@@ -51,14 +31,7 @@ Use a dedicated application role with only the permissions the app needs. Keep t
 
 ### Cloudflare Pages
 
-Set these repository values for the `Deploy Cloudflare Pages` workflow:
-
-| Name | Type | Value |
-| --- | --- | --- |
-| `CLOUDFLARE_ACCOUNT_ID` | Variable | Cloudflare account ID |
-| `CLOUDFLARE_PAGES_PROJECT` | Variable | Pages project name |
-| `VITE_API_BASE_URL` | Variable | Cloud Run service URL ending in `/api` |
-| `CLOUDFLARE_API_TOKEN` | Secret | Token scoped to deploy the Pages project |
+Set the Cloudflare variables and secret listed in the [Configuration Reference](../../wiki/Configuration-Reference.md#github-actions-variables-and-secrets) for the `Deploy Cloudflare Pages` workflow.
 
 The CI workflow runs checks first, then deploys Cloud Run, waits for its health check, and deploys the matching Cloudflare Pages branch. On the first deployment, set `VITE_API_BASE_URL` to the Cloud Run service URL ending in `/api` before pushing the deployment branch.
 

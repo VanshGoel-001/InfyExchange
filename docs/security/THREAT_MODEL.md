@@ -29,8 +29,6 @@ This model covers the application deployed on Cloudflare Pages, Google Cloud Run
 
 Cloud Run is a public HTTPS API by design. CORS only controls browser behavior; it is not API authentication. Use JWT authorization for protected operations and configure Cloud Run ingress and identity settings deliberately.
 
-Alembic migrations run on application startup. PostgreSQL transaction-scoped advisory locks serialize concurrent startup migrations. Schema changes must remain compatible with the previous Cloud Run revision during rollout.
-
 The API trusts forwarded headers from its hosting proxy. Review Cloud Run ingress and proxy behavior if the service's network path changes.
 
 ## Residual risks

@@ -283,19 +283,11 @@ nav .active {
   background: linear-gradient(135deg, #111, #686868)
 }
 
-.product-img label,
-.need-image label {
+.product-img .pill,
+.need-image .pill {
   position: absolute;
   left: 11px;
   top: 10px
-}
-
-.product-img svg,
-.need-image svg {
-  position: absolute;
-  right: 10px;
-  top: 10px;
-  color: #fff
 }
 
 .product-info {
@@ -310,11 +302,17 @@ nav .active {
 }
 
 .product-info small {
-  color: #69758a
+  color: #69758a;
+  display: flex;
+  align-items: center;
+  gap: 6px
 }
 
-.product-info small:nth-last-child(-n+2) {
-  display: none
+.product-info small svg,
+.need-card small svg {
+  width: 14px;
+  height: 14px;
+  flex: none
 }
 
 .pink,
@@ -552,23 +550,26 @@ select {
   margin: 7px 11px
 }
 
+.need-card>small {
+  display: flex;
+  align-items: center;
+  gap: 6px
+}
+
 .need-card p {
   font-size: 12px;
   line-height: 1.35;
   color: #5e697b;
-  height: 33px
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden
 }
 
 .need-card small {
   font-size: 11px;
   color: #5f6b7c
-}
-
-.need-card button {
-  margin: 4px 10px 0;
-  width: calc(100% - 20px);
-  padding: 6px;
-  color: #0874e8
 }
 
 .help-aside {
@@ -869,8 +870,9 @@ select {
   gap: 10px
 }
 
-.summary article {
+.summary .stat {
   display: flex;
+  color: inherit;
   padding: 16px;
   background: #eaf3ff;
   gap: 15px;
@@ -878,15 +880,15 @@ select {
   border-radius: 6px
 }
 
-.summary article:nth-child(2) {
+.summary .stat:nth-child(2) {
   background: #fff0f3
 }
 
-.summary article:nth-child(3) {
+.summary .stat:nth-child(3) {
   background: #e8faf2
 }
 
-.summary article:nth-child(4) {
+.summary .stat:nth-child(4) {
   background: #fff8e2
 }
 
@@ -958,7 +960,7 @@ select {
 .table-head,
 .table-row {
   display: grid;
-  grid-template-columns: 2.8fr .8fr .9fr .9fr 1fr 1fr 1.5fr;
+  grid-template-columns: var(--cols, 2.8fr .8fr .9fr .9fr 1fr 1fr 1.5fr);
   gap: 10px;
   align-items: center
 }
@@ -1193,7 +1195,7 @@ footer {
   padding: 25px 5%;
   border-top: 1px solid #e9edf2;
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr;
+  grid-template-columns: 2fr 1fr;
   gap: 40px;
   color: #536075;
   position: relative
@@ -1215,7 +1217,8 @@ footer>div {
   color: #111
 }
 
-footer small {
+footer small,
+footer>div a {
   color: #657084;
   line-height: 1.55
 }
@@ -2862,5 +2865,633 @@ input[name=password] {
   .categories a:hover {
     transform: none;
     background: #f3f8ff
+  }
+}
+
+/* ==========================================================================
+   Forms, feedback and interaction
+   Shared pieces used by Field, PasswordInput, Pill, the post menu, request
+   lists and the admin tabs. Kept in one block so they are easy to find.
+   ========================================================================== */
+
+:focus-visible {
+  outline: 2px solid #0874ee;
+  outline-offset: 2px
+}
+
+/* The decorative emoji strip at the bottom of the login/register page used to be painted over the form
+   and swallowed clicks on the submit button. It is now purely visual and sits behind the card. */
+.auth:after {
+  pointer-events: none;
+  z-index: 0
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1
+}
+
+.pill {
+  display: inline-block;
+  line-height: 1.2;
+  white-space: nowrap
+}
+
+/* Field: label text, control, then hint or error underneath */
+.field-label {
+  display: block
+}
+
+.form-field abbr {
+  text-decoration: none;
+  color: #c3283e
+}
+
+.form-field select {
+  margin-top: 8px;
+  font-weight: 400
+}
+
+.field-hint,
+.field-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4
+}
+
+.field-hint {
+  color: #667184
+}
+
+.field-error {
+  color: #c3283e
+}
+
+.form-field.has-error input,
+.form-field.has-error select,
+.form-field.has-error textarea {
+  border-color: #d93a4f;
+  background: #fff8f9
+}
+
+.form-lead {
+  color: #566276;
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0 0 14px
+}
+
+.form-card.narrow {
+  max-width: 560px;
+  margin: 16px auto
+}
+
+.flash {
+  background: #e7f8ef;
+  color: #0b7a46;
+  border: 1px solid #bfe8d1;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 12px 0
+}
+
+/* Password box: the toggle lives inside the box and the text never runs under it */
+.input-wrap {
+  display: block;
+  position: relative;
+  margin-top: 8px
+}
+
+.input-wrap input {
+  margin-top: 0;
+  padding-right: 46px
+}
+
+.input-wrap .eye {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  bottom: 0;
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #68758b
+}
+
+.input-wrap .eye svg {
+  width: 18px;
+  height: 18px
+}
+
+/* "What do you want to do?" choice buttons */
+.options {
+  margin: 13px 0 17px
+}
+
+.options .field-label {
+  font-weight: 600;
+  margin-bottom: 8px
+}
+
+.option-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+  gap: 8px
+}
+
+.option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 12px;
+  text-align: center;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  background: #fff;
+  color: #445067;
+  font-weight: 500;
+  cursor: pointer
+}
+
+.option input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer
+}
+
+.option.selected {
+  border-color: #0874ee;
+  background: #f3f8ff;
+  color: #0874ee;
+  font-weight: 600
+}
+
+.option:focus-within {
+  outline: 2px solid #0874ee;
+  outline-offset: 2px
+}
+
+/* Photos chosen for upload */
+.file-list {
+  list-style: none;
+  margin: -6px 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 6px
+}
+
+.file-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid #e4eaf1;
+  border-radius: 6px;
+  font-size: 14px
+}
+
+.file-list li span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
+}
+
+.file-list small {
+  color: #667184
+}
+
+.file-list button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #667184
+}
+
+.file-list button:hover {
+  background: #f0f3f7
+}
+
+.file-list svg {
+  width: 16px;
+  height: 16px
+}
+
+/* Sign-in with Google */
+.google-slot {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 18px
+}
+
+.google-note {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #667184
+}
+
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 6px;
+  color: #667184;
+  font-size: 13px
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #e4eaf1
+}
+
+/* Header "Post" menu (native details element: works without extra script) */
+.post-menu {
+  position: relative
+}
+
+.post-menu summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none
+}
+
+.post-menu summary::-webkit-details-marker {
+  display: none
+}
+
+.post-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  min-width: 250px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #e4eaf1;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #1d31542a;
+  white-space: normal
+}
+
+.post-menu-list a {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  column-gap: 10px;
+  padding: 10px;
+  border-radius: 6px;
+  color: #1c2536;
+  font-weight: 600
+}
+
+.post-menu-list a small {
+  grid-column: 2;
+  font-weight: 400;
+  color: #667184
+}
+
+.post-menu-list a:hover {
+  background: #f3f8ff
+}
+
+.post-menu-list svg {
+  width: 18px;
+  height: 18px;
+  color: #0874ee
+}
+
+/* Filters: heading row without the negative-margin float */
+.filters .filters-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between
+}
+
+.filters .filters-head .filter-clear {
+  margin: 0;
+  align-self: auto
+}
+
+.price-range {
+  border: 0;
+  padding: 0;
+  margin: 5px 0 0;
+  min-width: 0
+}
+
+.price-range legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-weight: 600
+}
+
+.empty-block {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+  text-align: center;
+  color: #566276
+}
+
+.empty-block p {
+  margin: 0
+}
+
+/* Profile and overview cards */
+.summary .stat svg {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  color: #0874ee
+}
+
+.summary .stat .waiting {
+  color: #a15c00;
+  font-weight: 600
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  float: right;
+  color: #0874ee;
+  font-size: 14px;
+  font-weight: 600
+}
+
+.link-button svg {
+  width: 15px;
+  height: 15px
+}
+
+.edit-profile {
+  grid-column: 2 / -1
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px
+}
+
+.my-item-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 2px
+}
+
+.my-item-status small {
+  color: #667184
+}
+
+/* Enquiries: stacked rows that wrap instead of a fixed grid */
+.lower-tables>* {
+  min-width: 0
+}
+
+.request-panel h2 small {
+  color: #667184;
+  font-weight: 500
+}
+
+.request {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid #edf0f4
+}
+
+.request-main {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: grid;
+  gap: 4px
+}
+
+.request-main p {
+  margin: 0;
+  color: #4b5668;
+  overflow-wrap: anywhere
+}
+
+.request-main small {
+  margin: 0;
+  color: #667184
+}
+
+.request-main a {
+  color: #0874ee
+}
+
+.request-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px
+}
+
+.contact-card {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+  font-size: 13px
+}
+
+.contact-card a {
+  color: #0874ee;
+  overflow-wrap: anywhere
+}
+
+.contact-reveal {
+  display: grid;
+  justify-items: end;
+  gap: 4px
+}
+
+@media(max-width:1100px) {
+  .lower-tables {
+    grid-template-columns: 1fr
+  }
+}
+
+/* Detail page side panel */
+.interest a.primary,
+.interest a.outline,
+.interest>button {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px
+}
+
+.interest .form-field {
+  margin: 0 0 12px
+}
+
+.interest .aside-link {
+  font-size: 14px
+}
+
+.interest .aside-link a {
+  color: #0874ee
+}
+
+/* Admin: real tab buttons and scrollable tables */
+.tabs {
+  height: auto;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 20px
+}
+
+.tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: -1px;
+  padding: 12px 18px;
+  border-bottom: 3px solid transparent;
+  color: #536176;
+  font-weight: 600
+}
+
+.tabs button svg {
+  width: 16px;
+  height: 16px
+}
+
+.tabs button:hover {
+  color: #0874ee
+}
+
+.tabs button.active {
+  color: #0874ee;
+  border-bottom-color: #0874ee
+}
+
+.admin-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 15px
+}
+
+.admin-head h2 {
+  margin: 0
+}
+
+.admin-search {
+  display: flex;
+  gap: 8px
+}
+
+.admin-search input {
+  width: 220px
+}
+
+.table-scroll {
+  overflow-x: auto
+}
+
+.table-scroll>.table-head,
+.table-scroll>.table-row {
+  min-width: 760px
+}
+
+.table-row select {
+  height: 30px;
+  padding: 2px 8px;
+  font-size: 13px
+}
+
+.wrap {
+  overflow-wrap: anywhere
+}
+
+/* Pages built on .wide had no side padding on desktop, so content touched the window edges
+   unless the screen was wider than the 1400px max-width. Mobile already has its own padding. */
+@media(min-width:951px) {
+  .wide {
+    padding-left: 28px;
+    padding-right: 28px
+  }
+}
+
+/* Profile card: give the name/email column the wider share and keep addresses unbroken */
+@media(min-width:951px) {
+  .personal-content {
+    grid-template-columns: 160px 1.6fr 1fr
+  }
+}
+
+.personal-content p {
+  overflow-wrap: anywhere
+}
+
+.summary .stat small {
+  font-size: 14px;
+  font-weight: 500
+}
+
+/* The tips box already fills its card; the old negative margins left a blank strip above it */
+.help-aside .tips {
+  margin: -10px -20px
+}
+
+/* Tip lists: small check mark in line with the text */
+.tipbox p {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px
+}
+
+.tipbox p::first-letter {
+  color: inherit
+}
+
+.tipbox p svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  color: #0ba573
+}
+
+@media screen and (max-width:760px) {
+  .post-menu-list {
+    position: static;
+    margin-top: 8px;
+    box-shadow: none
+  }
+
+  .admin-search input {
+    width: 100%;
+    flex: 1
   }
 }

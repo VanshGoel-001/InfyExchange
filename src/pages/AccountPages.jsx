@@ -1,89 +1,151 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Inbox, Megaphone, Package, Pencil, Send } from 'lucide-react';
 import { AppShell } from '../components/Layout';
-import { Banner } from '../components/Ui';
+import { Banner, Field, Flash, FormError, Pill } from '../components/Ui';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useForm } from '../hooks/useForm';
 import { NeedCard, ProductCard } from '../components/Cards';
 import { SkeletonCard } from '../components/ErrorBoundary';
+import {
+  INTEREST_STATUSES,
+  LISTING_STATUSES,
+  ROLES,
+  daysLeft,
+  formatDate,
+  initials,
+  labelOf,
+  toneOf,
+} from '../utils/labels';
+import { todayISO, validateProfileEdit } from '../utils/validate';
 
-const fmt = (value) => String(value || '').replaceAll('_', ' ');
-const price = (item) =>
-  item.price > 0 ? `₹${item.price}${item.price_unit ? `/${item.price_unit}` : ''}` : 'Free';
+function EditProfileForm({ user, token, onDone }) {
+  const { setUser } = useAuth();
+  const form = useForm({ role: user.role || '', joining_date: user.joining_date || '' }, validateProfileEdit, ['role', 'joining_date']);
+  const { bind, error } = form;
+
+  const save = form.handleSubmit(async (values) => {
+    const updated = await api.updateProfile({ role: values.role, joining_date: values.joining_date }, token);
+    setUser(updated);
+    onDone('Your profile has been updated.');
+  });
+
+  return (
+    <form className="edit-profile" onSubmit={save} noValidate>
+      <Field label="Your role" required error={error('role')}>
+        <select {...bind('role')}>
+          <option value="" disabled>Choose your role</option>
+          {ROLES.map((role) => (
+            <option key={role.value} value={role.value}>{role.option}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Date you joined Infosys" required error={error('joining_date')}>
+        <input {...bind('joining_date')} type="date" max={todayISO()} />
+      </Field>
+      <FormError>{form.formError}</FormError>
+      <div className="button-row">
+        <button className="primary" disabled={form.busy} aria-busy={form.busy}>{form.busy ? 'Saving…' : 'Save changes'}</button>
+        <button type="button" className="outline" onClick={() => onDone('')} disabled={form.busy}>Cancel</button>
+      </div>
+    </form>
+  );
+}
 
 export function ProfilePage() {
   const { token, user } = useAuth();
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState('');
 
   useEffect(() => {
     if (!token) return;
     api.summary(token).then(setSummary).catch((e) => setError(e.message));
   }, [token]);
 
-  const cards = [
-    ['◇', summary?.my_listings_count, 'My Listings'],
-    ['♡', summary?.my_interests_count, 'My Interests'],
-    ['⚑', summary?.my_needs_count, 'My Needs'],
-    ['▢', summary?.requests_received_count, 'Requests Received'],
+  const stats = [
+    [Package, summary?.my_listings_count, 'Items I posted', '/my-listings'],
+    [Megaphone, summary?.my_needs_count, 'Requests I posted', '/my-needs'],
+    [Send, summary?.my_interests_count, 'Enquiries I sent', '/activity'],
+    [Inbox, summary?.requests_received_count, 'Enquiries I received', '/activity', summary?.pending_requests_received_count],
   ];
 
   return (
     <AppShell>
-      <Banner title="My Profile" subtitle="Manage your information and see your activity on InfyExchange." />
+      <Banner title="My profile" subtitle="Your details and a quick look at what you have going on." />
+      <Flash />
 
       <div className="dashboard-grid profile-dashboard">
         <section>
           <div className="panel personal">
-            <h2>♙ Personal Information</h2>
+            <h2>
+              Your details
+              {!editing && (
+                <button type="button" className="link-button" onClick={() => { setSaved(''); setEditing(true); }}>
+                  <Pencil aria-hidden="true" /> Edit
+                </button>
+              )}
+            </h2>
+            {saved && <p role="status" className="flash">{saved}</p>}
             <div className="personal-content">
-              <div className="large-avatar">{user.name.slice(0, 2).toUpperCase()}</div>
-              <div>
-                <small>Full Name</small>
-                <p>{user.name}</p>
-                <small>Email</small>
-                <p>{user.email}</p>
-                <small>Phone Number</small>
-                <p>{user.phone}</p>
-              </div>
-              <div>
-                <small>Role</small>
-                <p>{user.role}</p>
-                <small>Joining Date</small>
-                <p>{user.joining_date}</p>
-              </div>
+              <div className="large-avatar">{initials(user.name)}</div>
+              {editing ? (
+                <EditProfileForm
+                  user={user}
+                  token={token}
+                  onDone={(message) => {
+                    setSaved(message);
+                    setEditing(false);
+                  }}
+                />
+              ) : (
+                <>
+                  <div>
+                    <small>Name</small>
+                    <p>{user.name}</p>
+                    <small>Email</small>
+                    <p>{user.email}</p>
+                    <small>Phone</small>
+                    <p>{user.phone}</p>
+                  </div>
+                  <div>
+                    <small>Role</small>
+                    <p>{labelOf(ROLES, user.role)}</p>
+                    <small>Joined Infosys</small>
+                    <p>{formatDate(user.joining_date)}</p>
+                  </div>
+                </>
+              )}
             </div>
+            {!editing && <p className="form-lead">You can change your role and joining date. Name, email and phone are fixed.</p>}
           </div>
         </section>
 
         <section>
           <div className="panel summary">
-            <h2>▥ My Activity Summary</h2>
+            <h2>At a glance</h2>
             <div>
-              {cards.map((x) => (
-                <article key={x[2]}>
-                  <span>{x[0]}</span>
+              {stats.map(([Icon, count, name, to, waiting]) => (
+                <Link className="stat" to={to} key={name}>
+                  <Icon aria-hidden="true" />
                   <b>
-                    {summary ? x[1] : '—'}
-                    <small>{x[2]}</small>
+                    {summary ? count : '—'}
+                    <small>{name}</small>
+                    {waiting > 0 && <small className="waiting">{waiting} waiting for your reply</small>}
                   </b>
-                </article>
+                </Link>
               ))}
             </div>
             {error && <p className="error">{error}</p>}
           </div>
 
           <div className="panel quick">
-            <h2>ϟ Quick Actions</h2>
-            <Link className="outline" to="/listings/new">
-              ＋ Post a Listing
-            </Link>
-            <Link className="outline" to="/needs/new">
-              ＋ Post a Need
-            </Link>
-            <Link className="outline" to="/activity">
-              View My Activity
-            </Link>
+            <h2>Quick actions</h2>
+            <Link className="outline" to="/listings/new">Post an item</Link>
+            <Link className="outline" to="/needs/new">Post a request</Link>
+            <Link className="outline" to="/activity">Enquiries</Link>
           </div>
         </section>
       </div>
@@ -93,15 +155,16 @@ export function ProfilePage() {
 
 export function ActivityPage() {
   const { token } = useAuth();
-  const [data, setData] = useState({ listings: [], needs: [], sent: [], received: [] });
+  const [data, setData] = useState({ sent: [], received: [] });
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = () => {
     setLoading(true);
-    Promise.all([api.myListings(token), api.myNeeds(token), api.sent(token), api.received(token)])
-      .then(([listings, needs, sent, received]) => setData({ listings, needs, sent, received }))
+    Promise.all([api.sent(token), api.received(token)])
+      .then(([sent, received]) => setData({ sent, received }))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
@@ -110,23 +173,19 @@ export function ActivityPage() {
     if (token) load();
   }, [token]);
 
-  const respond = async (id, action) => {
-    setBusy(id);
-    try {
-      await api[action](id, token);
-      load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(null);
+  const respond = async (item, action) => {
+    if (
+      action === 'accept' &&
+      !window.confirm(`Accept ${item.interested_user_name}'s enquiry? You will both be able to see each other's phone and email.`)
+    ) {
+      return;
     }
-  };
-
-  const remove = async (id) => {
-    if (!window.confirm('Delete this listing?')) return;
-    setBusy(id);
+    setBusy(item.id);
+    setError('');
+    setNotice('');
     try {
-      await api.deleteListing(id, token);
+      await api[action](item.id, token);
+      setNotice(action === 'accept' ? 'Enquiry accepted. You can now see each other’s contact details.' : 'Enquiry declined.');
       load();
     } catch (e) {
       setError(e.message);
@@ -138,64 +197,16 @@ export function ActivityPage() {
   return (
     <AppShell>
       <Banner
-        title="My Activity"
-        subtitle="Manage your listings, interests and requests all in one place."
+        title="Enquiries"
+        subtitle="People who asked about your items, and the items you asked about."
         kind="activity"
       />
-      {error && <p className="error">{error}</p>}
-
-      <section className="panel table">
-        <h2>
-          My Listings <small>({data.listings.length})</small>
-          <Link className="primary" to="/listings/new">
-            ＋ Post New Listing
-          </Link>
-        </h2>
-        <div className="table-head">
-          Item <span>Type</span>
-          <span>Price</span>
-          <span>Status</span>
-          <span>Posted On</span>
-          <span>Expires In</span>
-          <span>Actions</span>
-        </div>
-
-        {data.listings.map((item) => (
-          <div className="table-row" key={item.id}>
-            <div>
-              <i>{item.image_url ? <img src={item.image_url} alt="" /> : '▧'}</i>
-              <b>
-                {item.title}
-                <small>
-                  {fmt(item.condition)} · {item.location}
-                </small>
-              </b>
-            </div>
-            <span>
-              <label className="blue">{fmt(item.listing_type)}</label>
-            </span>
-            <b>{price(item)}</b>
-            <span>
-              <label className="status">{fmt(item.status)}</label>
-            </span>
-            <small>{new Date(item.created_at).toLocaleDateString()}</small>
-            <small>{new Date(item.expires_at).toLocaleDateString()}</small>
-            <span>
-              <button className="danger" disabled={busy === item.id} onClick={() => remove(item.id)}>
-                {busy === item.id ? 'Deleting…' : 'Delete'}
-              </button>
-            </span>
-          </div>
-        ))}
-        {!data.listings.length && !loading && (
-          <p className="empty">You have not posted any listings.</p>
-        )}
-      </section>
+      {error && <p role="alert" className="error">{error}</p>}
+      {notice && <p role="status" className="flash">{notice}</p>}
 
       <div className="lower-tables">
-        <ActivityList title={`My Needs (${data.needs.length})`} items={data.needs} kind="need" />
-        <ActivityList title={`My Interests (${data.sent.length})`} items={data.sent} kind="sent" token={token} />
-        <Requests items={data.received} onRespond={respond} busy={busy} token={token} />
+        <Requests items={data.received} loading={loading} onRespond={respond} busy={busy} token={token} />
+        <SentRequests items={data.sent} loading={loading} token={token} />
       </div>
     </AppShell>
   );
@@ -221,11 +232,12 @@ export function MyListingsPage() {
     if (token) load();
   }, [token]);
 
-  const remove = async (id) => {
-    if (!window.confirm('Delete this listing?')) return;
-    setBusy(id);
+  const remove = async (item) => {
+    if (!window.confirm(`Delete “${item.title}”? This cannot be undone.`)) return;
+    setBusy(item.id);
+    setError('');
     try {
-      await api.deleteListing(id, token);
+      await api.deleteListing(item.id, token);
       load();
     } catch (e) {
       setError(e.message);
@@ -236,14 +248,13 @@ export function MyListingsPage() {
 
   return (
     <AppShell>
-      <Banner title="My Listings" subtitle="Manage the items you have shared with the InfyExchange community." />
+      <Banner title="My items" subtitle="Everything you have posted for the community." />
+      <Flash />
       <div className="personal-page-head">
-        <p>{items.length} active {items.length === 1 ? 'listing' : 'listings'}</p>
-        <Link className="primary" to="/listings/new">
-          ＋ Post a Listing
-        </Link>
+        <p>{loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'item' : 'items'}`}</p>
+        <Link className="primary" to="/listings/new">Post an item</Link>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p role="alert" className="error">{error}</p>}
 
       {loading ? (
         <div className="my-items-grid">
@@ -256,11 +267,13 @@ export function MyListingsPage() {
           {items.map((item, index) => (
             <article className="my-item" key={item.id}>
               <ProductCard item={item} i={index} />
+              <div className="my-item-status">
+                <Pill tone={toneOf(LISTING_STATUSES, item.status)}>{labelOf(LISTING_STATUSES, item.status)}</Pill>
+                {item.status === 'ACTIVE' && <small>{daysLeft(item.expires_at)}</small>}
+              </div>
               <div className="my-item-actions">
-                <Link className="outline" to={`/listings/${item.id}`}>
-                  View listing
-                </Link>
-                <button className="danger" disabled={busy === item.id} onClick={() => remove(item.id)}>
+                <Link className="outline" to={`/listings/${item.id}`}>View</Link>
+                <button className="danger" disabled={busy === item.id} onClick={() => remove(item)}>
                   {busy === item.id ? 'Deleting…' : 'Delete'}
                 </button>
               </div>
@@ -269,13 +282,11 @@ export function MyListingsPage() {
         </section>
       )}
 
-      {!loading && !items.length && (
+      {!loading && !items.length && !error && (
         <section className="panel empty-state">
-          <h2>No listings yet</h2>
-          <p>Post an item to let fellow trainees discover it.</p>
-          <Link className="primary" to="/listings/new">
-            ＋ Post a Listing
-          </Link>
+          <h2>You have not posted anything yet</h2>
+          <p>Post an item and other trainees can find it.</p>
+          <Link className="primary" to="/listings/new">Post an item</Link>
         </section>
       )}
     </AppShell>
@@ -300,14 +311,13 @@ export function MyNeedsPage() {
 
   return (
     <AppShell>
-      <Banner title="My Needs" subtitle="Review requests you have posted for the InfyExchange community." kind="need" />
+      <Banner title="My requests" subtitle="Things you have asked the community for." kind="need" />
+      <Flash />
       <div className="personal-page-head">
-        <p>{items.length} active {items.length === 1 ? 'need' : 'needs'}</p>
-        <Link className="primary" to="/needs/new">
-          ＋ Post a Need
-        </Link>
+        <p>{loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'request' : 'requests'}`}</p>
+        <Link className="primary" to="/needs/new">Post a request</Link>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p role="alert" className="error">{error}</p>}
 
       <section className="my-items-grid my-needs-grid">
         {items.map((item, index) => (
@@ -317,89 +327,86 @@ export function MyNeedsPage() {
         ))}
       </section>
 
-      {!loading && !items.length && (
+      {!loading && !items.length && !error && (
         <section className="panel empty-state">
-          <h2>No needs yet</h2>
-          <p>Post a request and let the community know how it can help.</p>
-          <Link className="primary" to="/needs/new">
-            ＋ Post a Need
-          </Link>
+          <h2>You have not asked for anything yet</h2>
+          <p>Post a request and let the community know what you are looking for.</p>
+          <Link className="primary" to="/needs/new">Post a request</Link>
         </section>
       )}
     </AppShell>
   );
 }
 
-function ActivityList({ title, items, kind, token }) {
+function Requests({ items, loading, onRespond, busy, token }) {
   return (
-    <section className="panel mini-table">
-      <h2>{title}</h2>
+    <section className="panel request-panel">
+      <h2>
+        Enquiries about my items <small>({items.length})</small>
+      </h2>
       {items.map((item) => (
-        <div key={item.id}>
-          <i>{kind === 'need' ? '⚑' : '♡'}</i>
-          <b>
-            {kind === 'need' ? item.title : item.listing_title}
-            <small>
-              {kind === 'need' ? `${fmt(item.need_type)} · ${item.location}` : item.message || 'No message'}
-            </small>
-          </b>
-          <strong>{kind === 'need' ? `₹${item.budget || 0}` : fmt(item.status)}</strong>
-          {kind === 'sent' && item.status === 'ACCEPTED' && (
-            <ContactReveal interestId={item.id} token={token} />
-          )}
+        <div className="request" key={item.id}>
+          <div className="request-main">
+            <b>{item.interested_user_name}{item.interested_user_role && <small> · {labelOf(ROLES, item.interested_user_role)}</small>}</b>
+            <Link to={`/listings/${item.listing_id}`}>{item.listing_title}</Link>
+            <p>{item.message ? `“${item.message}”` : 'No message'}</p>
+            <small>{formatDate(item.created_at)}</small>
+          </div>
+          <div className="request-side">
+            <Pill tone={toneOf(INTEREST_STATUSES, item.status)}>{labelOf(INTEREST_STATUSES, item.status)}</Pill>
+            {item.status === 'PENDING' && (
+              <div className="button-row">
+                <button className="primary compact" disabled={busy === item.id} onClick={() => onRespond(item, 'accept')}>
+                  Accept
+                </button>
+                <button className="danger compact" disabled={busy === item.id} onClick={() => onRespond(item, 'reject')}>
+                  Decline
+                </button>
+              </div>
+            )}
+            {item.status === 'ACCEPTED' && <ContactReveal interestId={item.id} token={token} />}
+          </div>
         </div>
       ))}
-      {!items.length && <p className="empty">Nothing to show yet.</p>}
+      {!loading && !items.length && <p className="empty">No one has enquired about your items yet.</p>}
     </section>
   );
 }
 
-function Requests({ items, onRespond, busy, token }) {
+function SentRequests({ items, loading, token }) {
   return (
-    <section className="panel mini-table">
-      <h2>Requests Received ({items.length})</h2>
+    <section className="panel request-panel">
+      <h2>
+        Items I asked about <small>({items.length})</small>
+      </h2>
       {items.map((item) => (
-        <div key={item.id}>
-          <i>✉</i>
-          <b>
-            {item.interested_user_name}
-            <small>{item.listing_title}</small>
-          </b>
-          <strong>{item.message || 'No message'}</strong>
-          <label className={item.status === 'ACCEPTED' ? 'status' : item.status === 'REJECTED' ? 'pink' : 'pending'}>
-            {fmt(item.status)}
-          </label>
-          {item.status === 'PENDING' && (
-            <span>
-              <button
-                className="primary compact"
-                disabled={busy === item.id}
-                onClick={() => onRespond(item.id, 'accept')}
-              >
-                Accept
-              </button>
-              <button
-                className="danger compact"
-                disabled={busy === item.id}
-                onClick={() => onRespond(item.id, 'reject')}
-              >
-                Reject
-              </button>
-            </span>
-          )}
-          {item.status === 'ACCEPTED' && <ContactReveal interestId={item.id} token={token} />}
+        <div className="request" key={item.id}>
+          <div className="request-main">
+            <b>
+              <Link to={`/listings/${item.listing_id}`}>{item.listing_title}</Link>
+            </b>
+            <p>{item.message ? `“${item.message}”` : 'No message'}</p>
+            <small>{formatDate(item.created_at)}</small>
+          </div>
+          <div className="request-side">
+            <Pill tone={toneOf(INTEREST_STATUSES, item.status)}>{labelOf(INTEREST_STATUSES, item.status)}</Pill>
+            {item.status === 'ACCEPTED' && <ContactReveal interestId={item.id} token={token} />}
+          </div>
         </div>
       ))}
-      {!items.length && <p className="empty">No requests received.</p>}
+      {!loading && !items.length && (
+        <p className="empty">
+          You have not enquired about any items yet. <Link to="/listings">Browse items</Link>
+        </p>
+      )}
     </section>
   );
 }
 
 /**
- * Lazily reveals the counterparty's contact for an ACCEPTED interest.
- * Nothing is fetched (and no PII is exposed) until the user explicitly clicks,
- * which respects the backend contact rate-limiter. The endpoint still enforces
- * acceptance + participant membership server-side; this UI only surfaces it.
+ * Reveals the other person's contact details after a request is accepted.
+ * Nothing is fetched until the click, so details are not loaded for every row.
+ * The server still checks that the request is accepted and that you are one of the two people.
  */
 function ContactReveal({ interestId, token }) {
   const [state, setState] = useState('idle'); // idle | loading | revealed | error
@@ -410,8 +417,7 @@ function ContactReveal({ interestId, token }) {
     setState('loading');
     setError('');
     try {
-      const data = await api.contact(interestId, token);
-      setContact(data);
+      setContact(await api.contact(interestId, token));
       setState('revealed');
     } catch (e) {
       setError(e.message || 'Could not load contact details.');
@@ -421,14 +427,10 @@ function ContactReveal({ interestId, token }) {
 
   if (state === 'revealed' && contact) {
     return (
-      <span className="contact-reveal" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span className="contact-card">
         <b>{contact.name}</b>
-        <small>
-          <a href={`mailto:${contact.email}`}>{contact.email}</a>
-        </small>
-        <small>
-          <a href={`tel:${contact.phone}`}>{contact.phone}</a>
-        </small>
+        <a href={`mailto:${contact.email}`}>{contact.email}</a>
+        <a href={`tel:${contact.phone}`}>{contact.phone}</a>
       </span>
     );
   }
@@ -436,13 +438,9 @@ function ContactReveal({ interestId, token }) {
   return (
     <span className="contact-reveal">
       <button className="outline compact" disabled={state === 'loading'} onClick={reveal}>
-        {state === 'loading' ? 'Revealing…' : 'Reveal contact'}
+        {state === 'loading' ? 'Loading…' : 'Show contact details'}
       </button>
-      {state === 'error' && (
-        <small className="error" style={{ marginLeft: 8 }}>
-          {error}
-        </small>
-      )}
+      {state === 'error' && <small className="field-error" role="alert">{error}</small>}
     </span>
   );
 }

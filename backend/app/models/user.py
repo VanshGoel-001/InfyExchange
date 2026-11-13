@@ -21,21 +21,32 @@ class User(Base):
         nullable=False,
     )
 
-    phone: Mapped[str] = mapped_column(
+    # phone, role and joining_date are NULL only for accounts created through
+    # Google sign-in that have not finished the "complete your profile" step.
+    phone: Mapped[str | None] = mapped_column(
         String(20),
         unique=True,
         index=True,
-        nullable=False,
+        nullable=True,
     )
 
-    password_hash: Mapped[str] = mapped_column(
+    # NULL for Google-only accounts (they have no password to verify).
+    password_hash: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
+        nullable=True,
     )
 
-    role: Mapped[UserRole] = mapped_column(
+    # Google's stable account id ("sub" claim); the email can change, this cannot.
+    google_sub: Mapped[str | None] = mapped_column(
+        String(64),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
+
+    role: Mapped[UserRole | None] = mapped_column(
         Enum(UserRole),
-        nullable=False,
+        nullable=True,
     )
 
     is_admin: Mapped[bool] = mapped_column(
@@ -48,9 +59,9 @@ class User(Base):
         nullable=False,
     )
 
-    joining_date: Mapped[date] = mapped_column(
+    joining_date: Mapped[date | None] = mapped_column(
         Date,
-        nullable=False,
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -58,6 +69,14 @@ class User(Base):
         default=datetime.utcnow,
         nullable=False,
     )
+
+    @property
+    def profile_complete(self) -> bool:
+        return (
+            self.phone is not None
+            and self.role is not None
+            and self.joining_date is not None
+        )
 
     listings = relationship(
         "Listing",

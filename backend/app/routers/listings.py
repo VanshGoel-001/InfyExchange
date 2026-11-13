@@ -21,7 +21,7 @@ from sqlalchemy.orm import (
 
 from app.config import settings
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_complete_user, get_current_user
 from app.models.listing import Listing
 from app.models.listing_image import ListingImage
 from app.models.user import User
@@ -125,7 +125,7 @@ async def create_listing(
             description="Upload upto 5 images"
         )
     ] = [],
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_complete_user),
     db: Session = Depends(get_db),
 ):
 

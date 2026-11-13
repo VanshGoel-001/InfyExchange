@@ -39,12 +39,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: backend/requirements*.txt
       # Fresh build tooling and CA bundle (addresses the Oct-2026 pip/certifi
       # trust-store advisory) before anything is resolved or installed.
       - name: Upgrade build tooling
         run: python -m pip install --upgrade pip setuptools wheel certifi
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install dependencies (runtime + dev tooling)
+        run: pip install -r requirements-dev.txt
       - name: Tests
         run: python -m pytest -q
       - name: Static security analysis (bandit)

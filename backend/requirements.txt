@@ -1,4 +1,5 @@
-# Single dependency manifest: runtime + development/security tooling.
+# Runtime dependencies only: this file is what the production image installs.
+# Test and security tooling lives in requirements-dev.txt.
 # Pinned to versions verified against the deployed application.
 fastapi==0.142.2
 uvicorn[standard]==0.54.0
@@ -13,6 +14,8 @@ email-validator==2.3.0
 python-multipart==0.0.32
 
 pyjwt==2.15.1
+# RS256 signature check for Google ID tokens (PyJWT needs it for RSA keys).
+cryptography==50.0.2
 pwdlib[argon2]==0.3.1
 
 cloudinary==1.46.2
@@ -20,13 +23,3 @@ cloudinary==1.46.2
 alembic==1.20.0
 
 python-dotenv==1.2.4
-
-# ---- Development & security tooling ----
-# CI installs and runs these from this file. The production image also
-# installs them (Dockerfile uses requirements.txt), so keep this list lean.
-setuptools==84.2.1
-pytest==9.1.1
-httpx==0.28.1
-pytest-cov==7.1.0
-bandit==1.9.4
-pip-audit==2.10.1

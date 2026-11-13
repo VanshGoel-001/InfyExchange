@@ -1,116 +1,111 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as I from 'lucide-react';
+import { Inbox, LayoutDashboard, Megaphone, Package, ScrollText, Users } from 'lucide-react';
 import { AppShell } from '../components/Layout';
-import { Banner } from '../components/Ui';
+import { Banner, Pill } from '../components/Ui';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { CATEGORIES, LISTING_STATUSES, LISTING_TYPES, NEED_STATUSES, NEED_TYPES, ROLES, formatDateTime, formatPrice, labelOf, toneOf } from '../utils/labels';
+
+const TABS = [
+  ['overview', 'Overview', LayoutDashboard],
+  ['users', 'Members', Users],
+  ['listings', 'Items', Package],
+  ['needs', 'Requests', Megaphone],
+  ['audit', 'Admin log', ScrollText],
+];
+
+const LOG_ACTIONS = {
+  UPDATE_USER: 'Changed a member',
+  UPDATE_LISTING_STATUS: 'Changed an item’s availability',
+  DELETE_LISTING: 'Deleted an item',
+  DELETE_NEED: 'Deleted a request',
+};
+
+// "{"title":"Racket","old_status":"ACTIVE","new_status":"SOLD"}" -> "Racket: Available → Sold"
+function describeLog(log) {
+  let details;
+  try {
+    details = JSON.parse(log.details || 'null');
+  } catch {
+    return log.details || '';
+  }
+  if (!details) return '';
+  const parts = [];
+  if (details.title) parts.push(`“${details.title}”`);
+  if (details.email) parts.push(details.email);
+  if (details.old_status || details.new_status) {
+    parts.push(`${labelOf(LISTING_STATUSES, details.old_status)} → ${labelOf(LISTING_STATUSES, details.new_status)}`);
+  }
+  for (const [field, change] of Object.entries(details.changes || {})) {
+    const name = field === 'is_active' ? (change.to ? 'Reactivated' : 'Deactivated') : change.to ? 'Made admin' : 'Admin removed';
+    parts.push(name);
+  }
+  return parts.join(' · ');
+}
+
+function SearchBar({ value, onChange, onSearch, placeholder }) {
+  return (
+    <form className="admin-search" onSubmit={(e) => { e.preventDefault(); onSearch(); }}>
+      <input aria-label={placeholder} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+      <button className="primary compact" type="submit">Search</button>
+    </form>
+  );
+}
 
 export default function AdminPage() {
   const { user, token } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('overview'); // overview | users | listings | needs | audit
+  const [tab, setTab] = useState('overview');
   const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [actionNotice, setActionNotice] = useState('');
-
-  // Tables state
-  const [usersData, setUsersData] = useState({ items: [], total: 0 });
-  const [listingsData, setListingsData] = useState({ items: [], total: 0 });
-  const [needsData, setNeedsData] = useState({ items: [], total: 0 });
-  const [auditData, setAuditData] = useState({ items: [], total: 0 });
+  const [notice, setNotice] = useState('');
+  const [rows, setRows] = useState({ users: null, listings: null, needs: null, audit: null });
   const [searchTerm, setSearchTerm] = useState('');
   const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
-    if (user && !user.is_admin) {
-      navigate('/profile', { replace: true });
-    }
+    if (user && !user.is_admin) navigate('/profile', { replace: true });
   }, [user, navigate]);
 
-  const loadStats = async () => {
+  // `term` is passed in so a tab switch can load unfiltered without waiting for the state reset.
+  const loadTab = async (name = tab, term = searchTerm) => {
+    const query = term.trim() ? { search: term.trim() } : null;
     try {
-      const data = await api.adminStats(token);
-      setStats(data);
+      if (name === 'overview') {
+        setStats(await api.adminStats(token));
+        return;
+      }
+      const data = await {
+        users: () => api.adminUsers(query, token),
+        listings: () => api.adminListings(query, token),
+        needs: () => api.adminNeeds(query, token),
+        audit: () => api.adminAuditLogs(null, token),
+      }[name]();
+      setRows((current) => ({ ...current, [name]: data }));
     } catch (err) {
       setError(err.message);
-    }
-  };
-
-  const loadUsers = async () => {
-    setLoading(true);
-    try {
-      const data = await api.adminUsers(searchTerm ? { search: searchTerm } : null, token);
-      setUsersData(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadListings = async () => {
-    setLoading(true);
-    try {
-      const data = await api.adminListings(searchTerm ? { search: searchTerm } : null, token);
-      setListingsData(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadNeeds = async () => {
-    setLoading(true);
-    try {
-      const data = await api.adminNeeds(searchTerm ? { search: searchTerm } : null, token);
-      setNeedsData(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadAuditLogs = async () => {
-    setLoading(true);
-    try {
-      const data = await api.adminAuditLogs(null, token);
-      setAuditData(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
     }
   };
 
   useEffect(() => {
     if (!token || !user?.is_admin) return;
     setError('');
-    setActionNotice('');
-    if (tab === 'overview') {
-      loadStats();
-    } else if (tab === 'users') {
-      loadUsers();
-    } else if (tab === 'listings') {
-      loadListings();
-    } else if (tab === 'needs') {
-      loadNeeds();
-    } else if (tab === 'audit') {
-      loadAuditLogs();
-    }
+    setNotice('');
+    setSearchTerm('');
+    loadTab(tab, '');
   }, [tab, token]);
 
-  const toggleUserActive = async (targetUser) => {
-    const nextState = !targetUser.is_active;
-    if (!window.confirm(`Are you sure you want to ${nextState ? 'ACTIVATE' : 'DEACTIVATE'} user ${targetUser.email}?`)) return;
-    setBusyId(targetUser.id);
+  // One place for "confirm, call the API, say what happened, refresh".
+  const act = async ({ id, confirm, call, done, reload }) => {
+    if (confirm && !window.confirm(confirm)) return;
+    setBusyId(id);
+    setError('');
+    setNotice('');
     try {
-      await api.adminUpdateUser(targetUser.id, { is_active: nextState }, token);
-      setActionNotice(`User ${targetUser.email} status updated.`);
-      loadUsers();
+      await call();
+      setNotice(done);
+      await loadTab(reload);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -118,346 +113,217 @@ export default function AdminPage() {
     }
   };
 
-  const toggleUserAdmin = async (targetUser) => {
-    const nextState = !targetUser.is_admin;
-    if (!window.confirm(`Are you sure you want to ${nextState ? 'GRANT' : 'REVOKE'} Admin privileges for ${targetUser.email}?`)) return;
-    setBusyId(targetUser.id);
-    try {
-      await api.adminUpdateUser(targetUser.id, { is_admin: nextState }, token);
-      setActionNotice(`User ${targetUser.email} admin rights updated.`);
-      loadUsers();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const toggleActive = (member) =>
+    act({
+      id: member.id,
+      confirm: member.is_active
+        ? `Deactivate ${member.email}? They will no longer be able to use InfyExchange until you reactivate them.`
+        : `Reactivate ${member.email}?`,
+      call: () => api.adminUpdateUser(member.id, { is_active: !member.is_active }, token),
+      done: `${member.email} was ${member.is_active ? 'deactivated' : 'reactivated'}.`,
+      reload: 'users',
+    });
 
-  const changeListingStatus = async (listingId, newStatus) => {
-    setBusyId(listingId);
-    try {
-      await api.adminListingStatus(listingId, newStatus, token);
-      setActionNotice(`Listing #${listingId} status set to ${newStatus}.`);
-      loadListings();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const toggleAdmin = (member) =>
+    act({
+      id: member.id,
+      confirm: member.is_admin
+        ? `Remove admin access from ${member.email}?`
+        : `Give ${member.email} admin access? Admins can delete any item or request and deactivate members.`,
+      call: () => api.adminUpdateUser(member.id, { is_admin: !member.is_admin }, token),
+      done: member.is_admin ? `${member.email} is no longer an admin.` : `${member.email} is now an admin.`,
+      reload: 'users',
+    });
 
-  const deleteListing = async (listingId, title) => {
-    if (!window.confirm(`Permanently delete listing "${title}" (#${listingId})? This action is logged.`)) return;
-    setBusyId(listingId);
-    try {
-      await api.adminDeleteListing(listingId, token);
-      setActionNotice(`Listing #${listingId} deleted.`);
-      loadListings();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const setListingStatus = (item, status) =>
+    act({
+      id: item.id,
+      call: () => api.adminListingStatus(item.id, status, token),
+      done: `“${item.title}” is now marked ${labelOf(LISTING_STATUSES, status).toLowerCase()}.`,
+      reload: 'listings',
+    });
 
-  const deleteNeed = async (needId, title) => {
-    if (!window.confirm(`Permanently delete need request "${title}" (#${needId})? This action is logged.`)) return;
-    setBusyId(needId);
-    try {
-      await api.adminDeleteNeed(needId, token);
-      setActionNotice(`Need request #${needId} deleted.`);
-      loadNeeds();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const removeListing = (item) =>
+    act({
+      id: item.id,
+      confirm: `Delete “${item.title}” for good? This is recorded in the Admin log.`,
+      call: () => api.adminDeleteListing(item.id, token),
+      done: `“${item.title}” was deleted.`,
+      reload: 'listings',
+    });
+
+  const removeNeed = (need) =>
+    act({
+      id: need.id,
+      confirm: `Delete the request “${need.title}” for good? This is recorded in the Admin log.`,
+      call: () => api.adminDeleteNeed(need.id, token),
+      done: `“${need.title}” was deleted.`,
+      reload: 'needs',
+    });
+
+  const loading = (name) => rows[name] == null && !error;
+
+  const statCards = stats && [
+    [Users, `${stats.active_users} of ${stats.total_users}`, 'Members who can log in'],
+    [Package, `${stats.active_listings} of ${stats.total_listings}`, 'Items still available'],
+    [Megaphone, `${stats.active_needs} of ${stats.total_needs}`, 'Requests still open'],
+    [Inbox, `${stats.accepted_interests} of ${stats.total_interests}`, 'Enquiries accepted'],
+  ];
 
   return (
     <AppShell>
-      <Banner
-        title="Admin Control Plane"
-        subtitle="Privileged internal operations, database transparency, user access, and audit ledger."
-      />
+      <Banner title="Admin" subtitle="Look after members, items and requests. Everything you change is recorded." />
 
-      {error && <p role="alert" className="error" style={{ margin: '14px 0' }}>{error}</p>}
-      {actionNotice && <p role="status" className="status" style={{ margin: '14px 0', padding: '10px 14px' }}>{actionNotice}</p>}
+      {error && <p role="alert" className="error">{error}</p>}
+      {notice && <p role="status" className="flash">{notice}</p>}
 
-      {/* Admin Tabs */}
-      <div className="tabs" style={{ marginBottom: '20px', cursor: 'pointer' }}>
-        <b
-          style={{ borderBottom: tab === 'overview' ? '3px solid #0874ee' : 'none', color: tab === 'overview' ? '#0874ee' : '#536176' }}
-          onClick={() => setTab('overview')}
-        >
-          <I.LayoutDashboard style={{ width: 16, verticalAlign: 'middle', marginRight: 6 }} />
-          Database Overview
-        </b>
-        <b
-          style={{ borderBottom: tab === 'users' ? '3px solid #0874ee' : 'none', color: tab === 'users' ? '#0874ee' : '#536176' }}
-          onClick={() => setTab('users')}
-        >
-          <I.Users style={{ width: 16, verticalAlign: 'middle', marginRight: 6 }} />
-          Users & Access
-        </b>
-        <b
-          style={{ borderBottom: tab === 'listings' ? '3px solid #0874ee' : 'none', color: tab === 'listings' ? '#0874ee' : '#536176' }}
-          onClick={() => setTab('listings')}
-        >
-          <I.Package style={{ width: 16, verticalAlign: 'middle', marginRight: 6 }} />
-          Listings Moderation
-        </b>
-        <b
-          style={{ borderBottom: tab === 'needs' ? '3px solid #0874ee' : 'none', color: tab === 'needs' ? '#0874ee' : '#536176' }}
-          onClick={() => setTab('needs')}
-        >
-          <I.Megaphone style={{ width: 16, verticalAlign: 'middle', marginRight: 6 }} />
-          Needs Moderation
-        </b>
-        <b
-          style={{ borderBottom: tab === 'audit' ? '3px solid #0874ee' : 'none', color: tab === 'audit' ? '#0874ee' : '#536176' }}
-          onClick={() => setTab('audit')}
-        >
-          <I.ShieldAlert style={{ width: 16, verticalAlign: 'middle', marginRight: 6 }} />
-          Audit Ledger (WORM)
-        </b>
+      <div className="tabs" role="tablist" aria-label="Admin sections">
+        {TABS.map(([key, label, Icon]) => (
+          <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>
+            <Icon aria-hidden="true" /> {label}
+          </button>
+        ))}
       </div>
 
-      {/* TAB 1: Database Overview */}
       {tab === 'overview' && (
         <div>
-          <div className="summary" style={{ marginBottom: '25px' }}>
-            <h2>📊 Real-Time Database Metrics</h2>
+          <div className="panel summary">
+            <h2>Right now</h2>
             <div>
-              <article>
-                <span>👥</span>
-                <b>
-                  {stats ? `${stats.active_users} / ${stats.total_users}` : '—'}
-                  <small>Active Users / Total</small>
-                </b>
-              </article>
-              <article>
-                <span>📦</span>
-                <b>
-                  {stats ? `${stats.active_listings} / ${stats.total_listings}` : '—'}
-                  <small>Active Listings / Total</small>
-                </b>
-              </article>
-              <article>
-                <span>📢</span>
-                <b>
-                  {stats ? `${stats.active_needs} / ${stats.total_needs}` : '—'}
-                  <small>Active Needs / Total</small>
-                </b>
-              </article>
-              <article>
-                <span>🤝</span>
-                <b>
-                  {stats ? `${stats.accepted_interests} / ${stats.total_interests}` : '—'}
-                  <small>Accepted / Total Interests</small>
-                </b>
-              </article>
+              {(statCards || [[Users, '—', 'Members who can log in'], [Package, '—', 'Items still available'], [Megaphone, '—', 'Requests still open'], [Inbox, '—', 'Enquiries accepted']]).map(([Icon, value, name]) => (
+                <article className="stat" key={name}>
+                  <Icon aria-hidden="true" />
+                  <b>{value}<small>{name}</small></b>
+                </article>
+              ))}
             </div>
           </div>
-
-          <div className="panel" style={{ padding: '20px' }}>
-            <h3>🔒 Operational Security & System State</h3>
-            <p style={{ color: '#566276', lineHeight: 1.6 }}>
-              All database mutations executed within this panel generate an immutable append-only record in the <strong>Audit Ledger</strong> including your identity, client IP, action type, and diff payload. User sessions enforce server-side role validation on every API invocation.
+          <div className="panel">
+            <h3>Admin log</h3>
+            <p className="form-lead">
+              Every change made on this page is saved in the Admin log with who did it, when, and from which network address. Entries cannot be edited or deleted here.
             </p>
           </div>
         </div>
       )}
 
-      {/* TAB 2: Users Management */}
       {tab === 'users' && (
         <section className="panel table">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <h2>Users Management <small>({usersData.total} total)</small></h2>
-            <form onSubmit={(e) => { e.preventDefault(); loadUsers(); }} style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search name or email..."
-                style={{ width: 220 }}
-              />
-              <button className="primary" type="submit" style={{ padding: '6px 12px' }}>Search</button>
-            </form>
+          <div className="admin-head">
+            <h2>Members <small>({rows.users?.total ?? '…'})</small></h2>
+            <SearchBar value={searchTerm} onChange={setSearchTerm} onSearch={() => loadTab('users')} placeholder="Search name or email" />
           </div>
-
-          <div className="table-head" style={{ gridTemplateColumns: '1.2fr 1.6fr 1fr 0.8fr 0.8fr 1.5fr' }}>
-            <span>Name</span>
-            <span>Email</span>
-            <span>Phone</span>
-            <span>Role</span>
-            <span>Status</span>
-            <span>Privileged Actions</span>
-          </div>
-
-          {usersData.items.map((u) => (
-            <div className="table-row" key={u.id} style={{ gridTemplateColumns: '1.2fr 1.6fr 1fr 0.8fr 0.8fr 1.5fr' }}>
-              <b>{u.name} {u.is_admin && <label className="blue" style={{ fontSize: 10, padding: '2px 5px' }}>ADMIN</label>}</b>
-              <span>{u.email}</span>
-              <small>{u.phone}</small>
-              <span><label className="blue">{u.role}</label></span>
-              <span>
-                <label className={u.is_active ? 'status' : 'pink'}>
-                  {u.is_active ? 'ACTIVE' : 'DEACTIVATED'}
-                </label>
-              </span>
-              <span style={{ display: 'flex', gap: 6 }}>
-                <button
-                  className={u.is_active ? 'danger compact' : 'primary compact'}
-                  disabled={busyId === u.id || u.id === user.id}
-                  onClick={() => toggleUserActive(u)}
-                >
-                  {u.is_active ? 'Deactivate' : 'Activate'}
-                </button>
-                <button
-                  className="outline compact"
-                  disabled={busyId === u.id || u.id === user.id}
-                  onClick={() => toggleUserAdmin(u)}
-                >
-                  {u.is_admin ? 'Revoke Admin' : 'Make Admin'}
-                </button>
-              </span>
+          <div className="table-scroll">
+            <div className="table-head" style={{ '--cols': '1.3fr 1.7fr 1fr .8fr .9fr 1.7fr' }}>
+              <span>Name</span><span>Email</span><span>Phone</span><span>Role</span><span>Status</span><span>Actions</span>
             </div>
-          ))}
-          {!usersData.items.length && <p className="empty">No users found.</p>}
+            {rows.users?.items.map((u) => (
+              <div className="table-row" key={u.id} style={{ '--cols': '1.3fr 1.7fr 1fr .8fr .9fr 1.7fr' }}>
+                <b>{u.name} {u.is_admin && <Pill tone="blue">Admin</Pill>}</b>
+                <span className="wrap">{u.email}</span>
+                <small>{u.phone || 'Not added yet'}</small>
+                <span>{u.role ? labelOf(ROLES, u.role) : '—'}</span>
+                <span><Pill tone={u.is_active ? 'status' : 'pink'}>{u.is_active ? 'Active' : 'Deactivated'}</Pill></span>
+                <span className="button-row">
+                  <button className={u.is_active ? 'danger compact' : 'primary compact'} disabled={busyId === u.id || u.id === user.id} onClick={() => toggleActive(u)}>
+                    {u.is_active ? 'Deactivate' : 'Reactivate'}
+                  </button>
+                  <button className="outline compact" disabled={busyId === u.id || u.id === user.id} onClick={() => toggleAdmin(u)}>
+                    {u.is_admin ? 'Remove admin' : 'Make admin'}
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+          {loading('users') && <p className="empty">Loading…</p>}
+          {rows.users && !rows.users.items.length && <p className="empty">No members found.</p>}
         </section>
       )}
 
-      {/* TAB 3: Listings Moderation */}
       {tab === 'listings' && (
         <section className="panel table">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <h2>Listings Moderation <small>({listingsData.total} total)</small></h2>
-            <form onSubmit={(e) => { e.preventDefault(); loadListings(); }} style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search listing title..."
-                style={{ width: 220 }}
-              />
-              <button className="primary" type="submit" style={{ padding: '6px 12px' }}>Search</button>
-            </form>
+          <div className="admin-head">
+            <h2>Items <small>({rows.listings?.total ?? '…'})</small></h2>
+            <SearchBar value={searchTerm} onChange={setSearchTerm} onSearch={() => loadTab('listings')} placeholder="Search item name" />
           </div>
-
-          <div className="table-head" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1.6fr' }}>
-            <span>Item & Owner</span>
-            <span>Category</span>
-            <span>Price</span>
-            <span>Status</span>
-            <span>Photos</span>
-            <span>Moderation Actions</span>
-          </div>
-
-          {listingsData.items.map((item) => (
-            <div className="table-row" key={item.id} style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr 1.6fr' }}>
-              <div>
-                <b>{item.title} <small>Owner: {item.owner_name} ({item.owner_email})</small></b>
-              </div>
-              <small>{item.category} / {item.listing_type}</small>
-              <b>₹{item.price}</b>
-              <span>
-                <select
-                  value={item.status}
-                  disabled={busyId === item.id}
-                  onChange={(e) => changeListingStatus(item.id, e.target.value)}
-                  style={{ height: 28, fontSize: 12, padding: '2px 6px' }}
-                >
-                  {['ACTIVE', 'SOLD', 'RENTED', 'UNAVAILABLE'].map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </span>
-              <small>{item.image_count} photo(s)</small>
-              <span>
-                <button
-                  className="danger compact"
-                  disabled={busyId === item.id}
-                  onClick={() => deleteListing(item.id, item.title)}
-                >
-                  Delete
-                </button>
-              </span>
+          <div className="table-scroll">
+            <div className="table-head" style={{ '--cols': '2fr 1.2fr .8fr 1.2fr .7fr .8fr' }}>
+              <span>Item and owner</span><span>Category</span><span>Price</span><span>Availability</span><span>Photos</span><span>Actions</span>
             </div>
-          ))}
-          {!listingsData.items.length && <p className="empty">No listings found.</p>}
+            {rows.listings?.items.map((item) => (
+              <div className="table-row" key={item.id} style={{ '--cols': '2fr 1.2fr .8fr 1.2fr .7fr .8fr' }}>
+                <b>{item.title} <small>{item.owner_name} · {item.owner_email}</small></b>
+                <small>{labelOf(CATEGORIES, item.category)} · {labelOf(LISTING_TYPES, item.listing_type)}</small>
+                <b>{formatPrice(item.price)}</b>
+                <span>
+                  <select
+                    aria-label={`Availability of ${item.title}`}
+                    value={item.status}
+                    disabled={busyId === item.id}
+                    onChange={(e) => setListingStatus(item, e.target.value)}
+                  >
+                    {LISTING_STATUSES.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                </span>
+                <small>{item.image_count} {item.image_count === 1 ? 'photo' : 'photos'}</small>
+                <span>
+                  <button className="danger compact" disabled={busyId === item.id} onClick={() => removeListing(item)}>Delete</button>
+                </span>
+              </div>
+            ))}
+          </div>
+          {loading('listings') && <p className="empty">Loading…</p>}
+          {rows.listings && !rows.listings.items.length && <p className="empty">No items found.</p>}
         </section>
       )}
 
-      {/* TAB 4: Needs Moderation */}
       {tab === 'needs' && (
         <section className="panel table">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-            <h2>Needs Requests Moderation <small>({needsData.total} total)</small></h2>
-            <form onSubmit={(e) => { e.preventDefault(); loadNeeds(); }} style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search need title..."
-                style={{ width: 220 }}
-              />
-              <button className="primary" type="submit" style={{ padding: '6px 12px' }}>Search</button>
-            </form>
+          <div className="admin-head">
+            <h2>Requests <small>({rows.needs?.total ?? '…'})</small></h2>
+            <SearchBar value={searchTerm} onChange={setSearchTerm} onSearch={() => loadTab('needs')} placeholder="Search request title" />
           </div>
-
-          <div className="table-head" style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1.2fr' }}>
-            <span>Need & Requester</span>
-            <span>Category</span>
-            <span>Budget</span>
-            <span>Status</span>
-            <span>Actions</span>
-          </div>
-
-          {needsData.items.map((n) => (
-            <div className="table-row" key={n.id} style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1.2fr' }}>
-              <div>
-                <b>{n.title} <small>Requester: {n.user_name} ({n.user_email})</small></b>
-              </div>
-              <small>{n.category} / {n.need_type}</small>
-              <b>₹{n.budget}</b>
-              <span><label className="blue">{n.status}</label></span>
-              <span>
-                <button
-                  className="danger compact"
-                  disabled={busyId === n.id}
-                  onClick={() => deleteNeed(n.id, n.title)}
-                >
-                  Delete
-                </button>
-              </span>
+          <div className="table-scroll">
+            <div className="table-head" style={{ '--cols': '2fr 1.4fr .8fr 1fr .8fr' }}>
+              <span>Request and member</span><span>Category</span><span>Budget</span><span>Status</span><span>Actions</span>
             </div>
-          ))}
-          {!needsData.items.length && <p className="empty">No needs requests found.</p>}
+            {rows.needs?.items.map((n) => (
+              <div className="table-row" key={n.id} style={{ '--cols': '2fr 1.4fr .8fr 1fr .8fr' }}>
+                <b>{n.title} <small>{n.user_name} · {n.user_email}</small></b>
+                <small>{labelOf(CATEGORIES, n.category)} · {labelOf(NEED_TYPES, n.need_type)}</small>
+                <b>{n.budget > 0 ? formatPrice(n.budget) : '—'}</b>
+                <span><Pill tone={toneOf(NEED_STATUSES, n.status)}>{labelOf(NEED_STATUSES, n.status)}</Pill></span>
+                <span>
+                  <button className="danger compact" disabled={busyId === n.id} onClick={() => removeNeed(n)}>Delete</button>
+                </span>
+              </div>
+            ))}
+          </div>
+          {loading('needs') && <p className="empty">Loading…</p>}
+          {rows.needs && !rows.needs.items.length && <p className="empty">No requests found.</p>}
         </section>
       )}
 
-      {/* TAB 5: Audit Ledger (WORM) */}
       {tab === 'audit' && (
         <section className="panel table">
-          <h2>Immutable Audit Ledger <small>({auditData.total} events recorded)</small></h2>
-          <div className="table-head" style={{ gridTemplateColumns: '1.2fr 1.2fr 1.2fr 1fr 2fr' }}>
-            <span>Timestamp</span>
-            <span>Actor</span>
-            <span>Action</span>
-            <span>Target</span>
-            <span>Details / Diff</span>
-          </div>
-
-          {auditData.items.map((log) => (
-            <div className="table-row" key={log.id} style={{ gridTemplateColumns: '1.2fr 1.2fr 1.2fr 1fr 2fr' }}>
-              <small>{new Date(log.created_at).toLocaleString()}</small>
-              <b>{log.actor_name} <small>IP: {log.ip_address || '—'}</small></b>
-              <span><label className="blue" style={{ fontSize: 11 }}>{log.action}</label></span>
-              <small>{log.target_type} #{log.target_id || '—'}</small>
-              <code style={{ fontSize: 11, background: '#f8fafc', padding: '4px 6px', borderRadius: 4, overflowX: 'auto' }}>
-                {log.details || '—'}
-              </code>
+          <h2>Admin log <small>({rows.audit?.total ?? '…'} entries)</small></h2>
+          <div className="table-scroll">
+            <div className="table-head" style={{ '--cols': '1.2fr 1.2fr 1.3fr 2.2fr' }}>
+              <span>When</span><span>Who</span><span>What they did</span><span>Details</span>
             </div>
-          ))}
-          {!auditData.items.length && <p className="empty">No audit entries logged yet.</p>}
+            {rows.audit?.items.map((log) => (
+              <div className="table-row" key={log.id} style={{ '--cols': '1.2fr 1.2fr 1.3fr 2.2fr' }}>
+                <small>{formatDateTime(log.created_at)}</small>
+                <b>{log.actor_name || 'Removed member'} <small>{log.ip_address || ''}</small></b>
+                <span>{LOG_ACTIONS[log.action] || log.action}</span>
+                <small className="wrap">{describeLog(log)}</small>
+              </div>
+            ))}
+          </div>
+          {loading('audit') && <p className="empty">Loading…</p>}
+          {rows.audit && !rows.audit.items.length && <p className="empty">Nothing has been logged yet.</p>}
         </section>
       )}
     </AppShell>

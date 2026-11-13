@@ -8,7 +8,6 @@ from app.database import SessionLocal
 from app.models.listing import Listing
 from app.models.need import Need
 from app.services.cloudinary import delete_image
-from app.utils.enums import ListingStatus, NeedStatus
 
 logger = logging.getLogger(__name__)
 

@@ -8,19 +8,19 @@ export default function NotFoundPage() {
       <Header />
       <main className="wide" style={{ textAlign: 'center', padding: '60px 20px' }}>
         <Banner
-          title="404 — Page Not Found"
-          subtitle="The page you are looking for does not exist or has been relocated."
+          title="Page not found"
+          subtitle="That page does not exist, or the link is out of date."
         />
         <div style={{ marginTop: '30px' }}>
           <p style={{ color: '#566276', fontSize: '16px', marginBottom: '20px' }}>
-            Looking for something specific on InfyExchange? Explore active listings or search community needs.
+            Looking for something? Browse what other trainees are sharing, or see what they are asking for.
           </p>
-          <div style={{ display: 'inline-flex', gap: '12px' }}>
+          <div style={{ display: 'inline-flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Link className="primary" to="/listings">
-              Browse Listings
+              Browse items
             </Link>
             <Link className="outline" to="/needs">
-              Explore Needs
+              See requests
             </Link>
             <Link className="outline" to="/">
               Back to Home

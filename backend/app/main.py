@@ -8,15 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import settings
-from app.database import Base, engine
 from app.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
-from app.models import (
-    Interest,
-    Listing,
-    ListingImage,
-    Need,
-    User,
-)
 from app.routers import (
     admin,
     auth,
