@@ -33,7 +33,7 @@ The process fails at import if any of these is missing.
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 10080 | 7 days |
 | `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated **exact** origins; never `*`. Set to the Pages origin in production. (Vite dev runs on 5173 but proxies, so CORS is not used locally) |
 | `ALLOWED_EMAIL_DOMAINS` | `gmail.com` | Comma-separated; empty falls back to `gmail.com` |
-| `GOOGLE_CLIENT_ID` | empty | OAuth client ID of the Google Sign-In web client (public, not a secret). Empty switches "Sign in with Google" off (`POST /auth/google` answers `503`). Set it from the `GOOGLE_CLIENT_ID` GitHub variable: the deploy uses `--set-env-vars`, which replaces the whole set, so a value set by hand in the console is lost on the next deploy |
+| `GOOGLE_CLIENT_ID` | empty | OAuth client ID of the Google Sign-In web client (public, not a secret). Empty switches "Sign in with Google" off (`POST /auth/google` answers `503`). Set it from the `GOOGLE_CLIENT_ID` GitHub variable: the deploy writes this one on every run (an empty GitHub variable blanks it), while other variables set by hand on the service are left alone (`--update-env-vars`) |
 | `ALLOWED_HOSTS` | empty | If non-empty, enables `TrustedHostMiddleware` with this comma-separated list |
 
 ### Marketplace policy
@@ -44,6 +44,27 @@ The process fails at import if any of these is missing.
 | `MAX_IMAGES_PER_LISTING` | 5 | Mirror in `PostingPage.jsx` |
 | `MAX_IMAGE_SIZE_MB` | 5 | Mirror in `PostingPage.jsx` |
 | `DUPLICATE_SUBMISSION_WINDOW_SECONDS` | 60 | Idempotency window for creating listings/needs |
+
+### Email
+
+Provider-agnostic: routes queue a background task; `services/email_service.py` picks an adapter. Templates are in `app/templates/email/`.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `EMAIL_PROVIDER` | `console` | `console` prints the recipient, subject and a body preview to the log (local dev, or no account yet). `brevo` sends through Brevo's HTTPS API (`https://api.brevo.com/v3/smtp/email`, port 443). Any other value stops the app at startup |
+| `EMAIL_API_KEY` | empty | Brevo API key. A secret: Secret Manager in production, never the SPA |
+| `SENDER_EMAIL` | empty | Must be a sender verified in Brevo. With `brevo` selected, a missing key or sender logs a warning and falls back to the console adapter |
+| `ADMIN_EMAIL` | empty | Receives an alert for every enquiry (reply-to is the enquirer). Empty: a warning is logged and no alert is sent |
+
+Only two emails exist: a welcome email after registration, and the admin alert for a new enquiry. A failed send raises, is logged with a traceback and is stored in `failed_emails` for an admin to retry or discard. **These variables are not yet wired into `.github/workflows/cloud-run-deploy.yml`**, so production stays on the console adapter until they are added.
+
+### Enquiry timing
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `PENDING_ENQUIRY_EXPIRY_DAYS` | 7 | A pending enquiry nobody answered closes after this long; the buyer is told |
+| `CHAT_INACTIVITY_REMINDER_HOURS` | 48 | A chat with no activity this long gets one reminder to the owner |
+| `MAINTENANCE_INTERVAL_SECONDS` | 3600 | How often the in-process job runs (see Known Limitations on scheduling) |
 
 ### Security headers
 
@@ -70,6 +91,9 @@ Window `RATE_LIMIT_WINDOW_SECONDS` = 60. Per-process, sliding window.
 | `RATE_LIMIT_READ` | 120 |
 | `RATE_LIMIT_CONTACT` | 20 |
 | `RATE_LIMIT_ADMIN` | 60 |
+| `RATE_LIMIT_CHAT` | 30 (per signed-in user) |
+| `RATE_LIMIT_ACTION` | 30 (per signed-in user) |
+| `RATE_LIMIT_POLL` | 90 (per signed-in user) |
 
 ### Container
 
@@ -113,7 +137,7 @@ Both workflows fail fast with a clear message if a required value is missing.
 
 ## Google Secret Manager secrets
 
-Mapped by `gcloud run deploy --set-secrets`:
+**The deploy workflow no longer sets these** (it used `--set-secrets` until now). They are managed by hand on the Cloud Run service; the owner reports they are currently plain environment variables there (not verified from this repository). The table is the Secret Manager layout the project was designed for and the intended hardening if you move them:
 
 | Secret name | Injected as env var |
 | --- | --- |

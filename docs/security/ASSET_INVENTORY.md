@@ -8,6 +8,7 @@
 | API | `backend/`, Google Cloud Run | Public HTTPS; authentication and authorization enforced by FastAPI |
 | Database | Neon PostgreSQL | External managed database; TLS connection from Cloud Run; credentials in Secret Manager |
 | Images | Cloudinary | Uploaded through the API using server-side credentials |
+| Email | Brevo (`https://api.brevo.com`) | Optional (`EMAIL_PROVIDER=brevo`). Called over HTTPS by the API only; sends a welcome email and an admin enquiry alert |
 | CI/CD | `.github/workflows/` | GitHub Actions; Google authentication uses Workload Identity Federation |
 | Local database | `backend/docker-compose.yml` | Development only; port 5432 bound to localhost |
 
@@ -20,6 +21,8 @@
 | `CLOUDINARY_CLOUD_NAME` | Google Secret Manager | Used by the API only |
 | `CLOUDINARY_API_KEY` | Google Secret Manager | Used by the API only |
 | `CLOUDINARY_API_SECRET` | Google Secret Manager | Used by the API only |
+| `EMAIL_API_KEY` | Set by hand on the Cloud Run service | Brevo API key; API only. The deploy workflow neither sets nor removes it |
+| `SENDER_EMAIL`, `ADMIN_EMAIL` | Cloud Run environment (planned) | Addresses, not secrets, but not public either |
 | `CLOUDFLARE_API_TOKEN` | GitHub Actions secret | Scoped to deploy the Pages project |
 | Google WIF configuration | GitHub repository variables and Google IAM | No long-lived service-account key |
 

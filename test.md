@@ -1072,3 +1072,35 @@ Google's servers are never contacted by these tests: the verifier is stubbed at 
 ### Frontend
 
 The frontend still has no test runner. This round of UI work was verified by driving a real Chrome with throwaway Playwright scripts against a local backend (SQLite scratch database): registration and login validation, posting an item and a request, enquiry, accept and contact reveal, profile edit, the complete-profile flow, every admin tab, and phone-width layouts. Those scripts were not added to the repository. If you want them kept, they are the starting point for an end-to-end suite.
+
+## 18. Additions: phone rule, enquiry deal flow, chat, notifications and email
+
+Added after section 17, from requirements stated by the product owner in conversation. There is still no approved spec, so the AC/T columns in the new tests reuse the nearest derived group (AC-01 registration, AC-07 listings, AC-09/10 interests and contact, AC-13 admin, AC-14 cleanup) and the test ids are new (`TC-API-ENQ`, `TC-API-CHT`, `TC-API-NOT`, `TC-SVC-MNT`, `TC-EML`). Re-map them when real criteria exist.
+
+| File | Tests | What it covers |
+| --- | --- | --- |
+| `test_api_enquiry_flow.py` | 45 | accept (several at once, item stays Available), one-tap decline and quick reply, close deal (Sold / Lent out, rivals closed and told, race guard), mark returned (expiry renewed), "Did you get it?", still available, contact reveal only for chatting and the deal winner, deleting an item notifies buyers, only the enquiry sends email |
+| `test_api_chat.py` | 43 | participants only, send and ordering, length and state rules, unread badges, `after_id` polling and the 200-message page, block and report, per-user rate limits, cascades |
+| `test_api_notifications.py` | 14 | list and unread total, own-only, mark one or all read, limits |
+| `test_service_maintenance.py` | 23 | 7-day pending expiry and the 48-hour reminder at their exact boundaries, once per quiet spell, re-arming, idempotence |
+| `test_email.py` | 34 | templates (escaping, strict variables), adapter selection, console and Brevo adapters, welcome and admin-alert emails, loud failure plus stored copy, admin list/retry/discard, 30-day purge |
+| `test_api_review_fixes.py` | 24 | regressions for the deep code review: re-enquiry after a closed enquiry (declined stays final), whitespace-only text rejected, price/budget capped at 10,000,000 (no 500), admin cannot deactivate self, cleanup loop never blocks the event loop (longest stall < 0.2 s), failed image cleanup is logged, not raised |
+| changed | | `test_validation_schemas.py`, `test_api_profile.py`, `test_api_auth_flows.py` (Indian-mobile phone rule, normalizing, 15-digit and non-ASCII rejection), `test_api_listings.py` and `test_authorization.py` (price-only `PUT`) |
+
+**Latest full run: 809 passed, 1 failed** (about 7 minutes, SQLite, with `DATABASE_URL_UNPOOLED=""`). The one failure was `TC-VAL-NED-002`, which still expected a need budget of 10⁹ to be valid; the review fix caps it at 10,000,000, so the test was updated (boundaries 10,000,000 valid, 10,000,001 and 10⁹ invalid). The updated test and the review-fix file were re-run together (133 passed); the whole suite was not re-run after that one edit.
+
+**Review fixes verified by hand (not in the suite).** Two simultaneous registrations or enquiries for the same person return 409 instead of 500 (checked against real PostgreSQL; no deterministic automated test exists). In a real Chrome: a failed `/auth/me` shows "Try again" and keeps the session while a genuine 401 still logs out, a request that never answers ends with a message after 30 s, a slow older search no longer overwrites a newer one, and 23 enquiries are all listed.
+
+**How email is tested.** Nothing in the application is patched. The `brevo` fixture starts a real HTTP server on 127.0.0.1 and the adapter POSTs to it exactly as it would to Brevo; the tests read what arrived (path, `api-key` header, JSON body). That verifies **the request we send**. It does not verify Brevo's behaviour, which needs a live API key.
+
+**Not covered automatically**
+- Real Brevo delivery, sender verification and the free-tier daily limit.
+- The PostgreSQL advisory-lock branch of the maintenance job and the `SELECT ... FOR UPDATE` on close-deal (both are no-ops on SQLite).
+- Whether the background jobs actually run on a schedule on Cloud Run.
+- The deploy workflow (the email variables are not wired in yet).
+
+**Verified by hand (not in the suite)**
+- Migrations `c3a8f1d27b64` and `d5b2e9a14c70` on real PostgreSQL 17 in a scratch database: upgrade over existing data (an accepted enquiry survives and is backfilled), `CLOSED` added to the enum, `alembic check` reports no drift, downgrade then upgrade works.
+- A real Chrome (Playwright) against a scratch backend: registration with `+91 98765 xxxxx`, a 15-digit phone refused on the client, the whole enquiry-to-close flow with two users, bell badge and polling without reload, price edit, mark returned, admin Reports and Failed emails tabs, and the chat at 390 px width. 25 checks, no console errors, no failed requests. Two UI races found this way (a notice appearing before the screen refreshed) were fixed.
+
+**Known gaps found while testing.** Three migration tests open a real connection to whatever `backend/.env` names (see Known Limitations). The first end-to-end attempt hit another developer server on port 8000 and left a test user in the local dev database, since removed.

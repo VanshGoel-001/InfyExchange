@@ -6,22 +6,27 @@ The API lives in `backend/app/`. It is a synchronous FastAPI application (sync S
 
 | Path | Role |
 | --- | --- |
-| `main.py` | Creates the `FastAPI` app, wires middleware, routers, exception handlers, `/` and `/health`, the lifespan (migrations + cleanup task) and a patched OpenAPI schema |
+| `main.py` | Creates the `FastAPI` app, wires middleware, routers, exception handlers, `/` and `/health`, the lifespan (migrations + cleanup and maintenance tasks) and a patched OpenAPI schema |
 | `config.py` | `Settings` (pydantic-settings) and the module-level singleton `settings` |
 | `database.py` | `engine`, `SessionLocal`, declarative `Base`, `get_db()` dependency |
 | `dependencies.py` | `get_current_user`, `get_current_admin` |
 | `middleware.py` | `RequestContextMiddleware`, `SecurityHeadersMiddleware` |
-| `routers/` | `auth`, `users`, `listings`, `interests`, `needs`, `admin` |
-| `schemas/` | Pydantic models: `auth`, `user`, `listing`, `interest`, `need` |
-| `models/` | ORM models: `User`, `Listing`, `ListingImage`, `Interest`, `Need`, `AuditLog` |
+| `routers/` | `auth`, `users`, `listings`, `interests`, `chat`, `notifications`, `needs`, `admin` |
+| `schemas/` | Pydantic models: `auth`, `user`, `listing`, `interest`, `chat`, `notification`, `need` |
+| `models/` | ORM models: `User`, `Listing`, `ListingImage`, `Interest`, `Message`, `Notification`, `UserBlock`, `Report`, `FailedEmail`, `Need`, `AuditLog` |
 | `services/auth.py` | Argon2id hashing, JWT create/decode |
 | `services/cloudinary.py` | Image validation, upload, delete |
 | `services/rate_limit.py` | In-memory sliding-window limiter and shared limiter instances |
-| `services/cleanup.py` | Expired-data deletion and the 24 h loop |
+| `services/cleanup.py` | Expired-data deletion (also failed emails older than 30 days) and the 24 h loop |
+| `services/maintenance.py` | 7-day pending-enquiry expiry and the 48-hour chat reminder; hourly loop with a PostgreSQL advisory lock |
+| `services/notify.py` | `notify()` (adds a bell row to the caller's session), `short()`, `is_blocked_between()` |
+| `services/email_service.py` | `EmailAdapter` (abstract), `ConsoleEmailAdapter`, `BrevoEmailAdapter`, Jinja2 rendering, `send_welcome`, `send_enquiry_alert`, failure storage |
+| `templates/email/` | `welcome.html`, `enquiry_admin.html` (autoescaped; a missing variable raises) |
+| `utils/phone.py` | `normalize_phone`, `validate_indian_mobile` (shared by register and complete-profile) |
 | `services/migration.py` | Programmatic `alembic upgrade head` with an advisory lock |
 | `utils/enums.py` | All enums shared by models and schemas |
 | `utils/logging_utils.py` | Logging setup with request IDs and UTC timestamps |
-| `run_cleanup.py` | CLI entry for one-shot cleanup |
+| `run_cleanup.py` | CLI entry: one-shot cleanup, then one maintenance run |
 
 ## Startup and migrations
 
@@ -91,7 +96,7 @@ Helpers:
 - `rate_limit_dependency(limiter, scope, detail)` → a FastAPI dependency (used by the admin router).
 - `limiter.enforce(key, detail)` → raises `429` with `Retry-After`.
 
-Limiter instances (`login_limiter`, `account_login_limiter`, `register_limiter`, `create_limiter`, `read_limiter`, `contact_limiter`, `admin_limiter`) are created at import from `settings`. State is per process: it resets on restart and is not shared between Cloud Run instances or Uvicorn workers.
+`user_key(user_id, scope)` → `"<scope>:user:<id>"` for signed-in actions (campus users share an IP, so IP keys would collide). Limiter instances (`login_limiter`, `account_login_limiter`, `register_limiter`, `create_limiter`, `read_limiter`, `contact_limiter`, `admin_limiter`, and the per-user `chat_limiter`, `action_limiter`, `poll_limiter`) are created at import from `settings`; `tests/conftest.py` clears every one of them, so add a new limiter there too. State is per process: it resets on restart and is not shared between Cloud Run instances or Uvicorn workers.
 
 ## Expiry cleanup (`services/cleanup.py`)
 
@@ -102,6 +107,12 @@ Limiter instances (`login_limiter`, `account_login_limiter`, `register_limiter`,
 3. commits once and logs the counts.
 
 `cleanup_loop()` runs it, logs and survives any exception, then sleeps 24 h. `run_cleanup.py` configures basic logging and calls it once.
+
+## Maintenance and email
+
+`run_maintenance(now=None)` closes pending enquiries older than `PENDING_ENQUIRY_EXPIRY_DAYS`, and for `ACCEPTED` chats on `ACTIVE` items quiet for `CHAT_INACTIVITY_REMINDER_HOURS` it sets `reminder_sent_at` and adds a bell notification for the owner. It is idempotent, takes the clock as a parameter (tests move time instead of sleeping) and is run hourly by `maintenance_loop()` via `asyncio.to_thread`.
+
+Email follows one pattern: a route queues `email_service.send_*` with FastAPI `BackgroundTasks` after the commit, and holds no HTML or HTTP logic. `deliver()` calls the adapter chosen by `EMAIL_PROVIDER`. On failure it logs the traceback, stores the rendered message in `failed_emails` and re-raises; admins retry or discard under `/api/admin/failed-emails`. The Brevo adapter's error text carries only the HTTP status and Brevo's error code, never the recipient. In tests the `brevo` fixture points the adapter at a real HTTP server on localhost and `tests/conftest.py` forces the email settings empty so a developer's real key is never used.
 
 ## Logging
 

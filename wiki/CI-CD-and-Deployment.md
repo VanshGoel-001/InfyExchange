@@ -60,9 +60,10 @@ Runs in the `neon-staging` GitHub environment with `id-token: write`; a concurre
    gcloud run deploy $CLOUD_RUN_SERVICE --image $IMAGE --platform managed
      --allow-unauthenticated --service-account $CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT
      --port 8080 --memory 1Gi --cpu 1 --max 3 --concurrency 40
-     --set-env-vars ENVIRONMENT=production,CORS_ORIGINS=…,HSTS_ENABLED=true,DB_POOL_SIZE=3,DB_MAX_OVERFLOW=2
-     --set-secrets DATABASE_URL=NEON_DATABASE_URL:latest, …
+     --update-env-vars ENVIRONMENT=production,CORS_ORIGINS=…,HSTS_ENABLED=true,DB_POOL_SIZE=3,DB_MAX_OVERFLOW=2,GOOGLE_CLIENT_ID=…
    ```
+
+   `--update-env-vars` only adds or changes the six names listed, so every other variable or secret on the service (the database URLs, `SECRET_KEY`, the Cloudinary and email settings) survives a deploy. The workflow sets **no secrets** and removes nothing: those values are managed by hand on the Cloud Run service. The service-level flags above (`--memory`, `--cpu`, `--max`, `--concurrency`, `--service-account`, `--allow-unauthenticated`) are still written on every deploy, so a hand-edit of those is overwritten.
 
 7. **Health check:** read the service URL and `curl --fail --retry 5 --retry-delay 5 <url>/health`.
 

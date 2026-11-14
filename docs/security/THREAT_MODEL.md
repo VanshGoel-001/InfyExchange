@@ -23,6 +23,9 @@ This model covers the application deployed on Cloudflare Pages, Google Cloud Run
 | Supply-chain compromise | Locked dependencies, CI audits, container build | Pin container image digests and review workflow action versions |
 | Cloud misconfiguration | GitHub Workload Identity Federation; separate deploy/runtime service accounts | Verify IAM bindings, Cloud Run ingress, Pages settings, and secret access |
 | XSS and token theft | React escaping; CSP generated for Pages; API security headers | CSP is report-only until browser validation; no token revocation flow |
+| Chat abuse and harassment | Participants only; per-user message and action limits; report (admin review) and block (silent, both directions); blocked users cannot send new enquiries; contact details only via the accepted-enquiry route | No message moderation or retention policy; reports are reviewed manually |
+| Third-party email provider | Brevo called over HTTPS from the API only; key in Secret Manager; templates autoescape user text; errors never include the recipient; console adapter by default | Brevo now processes names, addresses and enquiry messages; the admin alert deliberately carries the enquirer's email; failed emails keep an address and body for up to 30 days; addresses are not verified |
+| Development against production | None in code | `backend/.env` holding production URLs makes a local start run migrations and background jobs on production; keep production URLs in Secret Manager only |
 | Weak detection | Request IDs, security events, Cloud Logging integration | Configure retention, dashboards, and alerts |
 
 ## Operational notes

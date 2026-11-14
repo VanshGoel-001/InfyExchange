@@ -33,10 +33,11 @@ There is no TypeScript, state-management library, CSS framework, linter or test 
 | `/needs` | `NeedsPage` | public; `?scope=mine` for own |
 | `/needs/new` | `PostingPage need` | login required |
 | `/profile` | `ProfilePage` (`AccountPages.jsx`) | login required |
-| `/activity` | `ActivityPage` | login required – shown to users as **Enquiries**: enquiries received (accept/decline, contact reveal) and sent |
-| `/my-listings` | `MyListingsPage` | login required – "My items": view/delete own listings |
+| `/activity` | `ActivityPage` | login required – shown to users as **Enquiries**: enquiries received (accept, one-tap decline with quick replies) and sent, each with an *Open chat* link, unread badge and contact reveal |
+| `/chats/:id` | `ChatPage` | login required – the thread for one enquiry: messages (polled every 4 s), **Close deal with [name]**, Mark returned, the "Did you get it?" and 48-hour reminder banners, report and block |
+| `/my-listings` | `MyListingsPage` | login required – "My items": view, **edit the price** (the only editable field), **mark returned** for lent-out items, delete |
 | `/my-needs` | `MyNeedsPage` | login required – "My requests": read-only list of own needs |
-| `/admin` | `AdminPage` | login **and** `is_admin`, else redirected to `/profile` |
+| `/admin` | `AdminPage` | login **and** `is_admin`, else redirected to `/profile`; tabs: Overview, Members, Items, Requests, Reports, Failed emails (Retry / Discard), Admin log |
 | `*` | `NotFoundPage` | public |
 
 `Protected` waits for the auth bootstrap (`loading`), redirects anonymous users to `/login`, sends users whose `profile_complete` is false to `/complete-profile` (unless `allowIncomplete`), and redirects non-admins away from `adminOnly` routes. This is a UX convenience only – every protected API route re-checks on the server.
@@ -65,8 +66,10 @@ Screens use plain words, never API codes: a *need* is a **request** ("Post a req
 - Adds `Content-Type: application/json` except for `FormData` bodies (the browser sets the multipart boundary) and attaches `Authorization: Bearer …` from the `token` option or `localStorage`.
 - On a non-2xx response: a `401` removes the stored token and fires `auth:expired`; the body is parsed and thrown as `ApiError(message, status, details, fields)`. The backend reports validation problems as `"field: message"` strings (one, or a list); they are flattened into `message` and also split into a `fields` map so forms can show each one under its field. `5xx` responses become a generic "Something went wrong on our side" message (except `503` with a text `detail`, used for "Google sign-in is off"), and a network failure becomes "Could not reach InfyExchange...".
 - `retries` (used for idempotent GETs, value 1) retries only network-level `TypeError`/"Failed to fetch" failures with exponential backoff (500 ms × 2^attempt). HTTP errors are never retried.
+- **Deadline:** every call is aborted after 30 s (120 s for `FormData` uploads) and fails with a plain "took too long to answer" `ApiError` (status 0), so a lost answer can never leave a form busy forever. A caller's own `signal` (the posting page uses one) still cancels the request.
+- **Paging:** `requestAll()` backs `myListings`, `myNeeds`, `sent` and `received`. The API returns 20 rows unless told otherwise and at most 100, so it asks 100 at a time until a page comes back short (up to 20 pages).
 
-`api` exposes one function per endpoint (auth, listings, needs, interests, summary, admin). Useful gaps to know about: there is no wrapper for `PUT /listings/{id}` or `DELETE /needs/{id}` (so users cannot edit listings or delete their own needs from the UI; the "My requests" page is read-only), and there is no way to respond to a need (the API has no endpoint for it), so the need card is display-only.
+`api` exposes one function per endpoint (auth, listings, needs, interests, summary, admin). Useful gaps to know about: there is no wrapper for `DELETE /needs/{id}` (so users cannot delete their own needs from the UI; the "My requests" page is read-only), and there is no way to respond to a need (the API has no endpoint for it), so the need card is display-only.
 
 ## Pages and components
 
@@ -74,7 +77,7 @@ Screens use plain words, never API codes: a *need* is a **request** ("Post a req
 | --- | --- |
 | `components/Layout.jsx` | `Logo`, `Header` (nav, auth buttons, **Post** menu, account dropdown, mobile menu, admin link), `Footer` (used only on the auth pages; three real quick links), `Sidebar` (account nav), `AppShell` (header + sidebar + content) |
 | `components/Cards.jsx` | `ProductCard` (listing tile with type badge, price, condition, location) and `NeedCard` (display only) |
-| `components/Ui.jsx` | `Banner`, `Pill` (badge), `Field` (label + control + hint/error), `PasswordInput`, `FormError`, `Flash` (one-time success note passed via router state), `TipBox` |
+| `components/Ui.jsx` | `Banner`, `Pill` (badge), `Field` (label + control + hint/error), `PasswordInput`, `FormError`, `Flash` (one-time success note passed via router state), `Toast` (floating message passed as `navigate(path, { state: { toast } })`; shown by `Header`, hides itself after 12 s, and clears the history entry so a refresh does not repeat it; used after registration to say the welcome email may be in spam), `TipBox` |
 | `components/GoogleButton.jsx` | Loads Google's script and renders its button; renders nothing without `VITE_GOOGLE_CLIENT_ID` |
 | `hooks/useForm.js` | Form state: errors appear after blur or submit, server field errors are mapped to fields and cleared on edit, submit is locked while busy, the first invalid field is focused |
 | `components/ErrorBoundary.jsx` | Class `ErrorBoundary` (render-error fallback with reload button) and `SkeletonCard` loading placeholder |

@@ -36,7 +36,7 @@ Backend (run **from `backend/`** – `.env` and `alembic.ini` resolve relative t
 pip install -r requirements-dev.txt        # runtime + test/security tooling (prod image uses requirements.txt only)
 docker compose up -d                       # local Postgres 17 on 127.0.0.1:5432
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-python -m pytest -q                        # ~580 tests, ~3.5 min; SQLite, no Docker/.env needed
+python -m pytest -q                        # ~790 tests, ~7 min; SQLite, no Docker needed. Pass DATABASE_URL_UNPOOLED="" so tests never touch the .env database
 python -m bandit -r app -q
 python -m pip_audit -r requirements.txt --progress-spinner off
 alembic revision --autogenerate -m "msg"  # then REVIEW the file
@@ -62,7 +62,7 @@ There is no frontend test runner or linter. **Before saying a change works:** ba
 ```
 src/                 React 19 + Vite 8. pages/ (screens) · components/ · hooks/useForm.js · context/AuthContext.jsx · services/api.js · utils/ (labels.js = enum to text, validate.js = form rules, filters.js)
 backend/app/         routers/ (HTTP + business rules) · models/ · schemas/ · services/ · dependencies.py · middleware.py · config.py · main.py
-backend/alembic/     one revision so far: ee1edd3df3f3
+backend/alembic/     four revisions: ee1edd3df3f3 -> b7c41d9e5a20 -> c3a8f1d27b64 (enquiry flow, chat, bell) -> d5b2e9a14c70 (failed emails)
 backend/tests/       conftest.py swaps in SQLite and disables the lifespan; tests/support.py = builders. New tests carry TC-/AC-/T ids in docstrings
 test.md              Test plan (generated tables mirror those docstrings; derived baseline, not approved)
 docs/security/       threat model, runbook, pipeline, asset inventory, acceptance criteria, test plan
@@ -78,7 +78,7 @@ Where to look for what: endpoints & rules → `wiki/API-Reference.md`; tables �
 
 **Security**
 - Every non-public route uses `Depends(get_current_user)`; admin routes inherit `get_current_admin` from the admin router. Ownership is checked explicitly (`owner_id != current_user.id → 403`). New write/reveal endpoints get a rate-limit bucket.
-- **Contact details (email/phone) leave the API only via `GET /interests/{id}/contact`**, only for `ACCEPTED` interests, only to the listing owner or the interested user. Never add them to listing/interest/need payloads.
+- **Contact details (email/phone) leave the API only via `GET /interests/{id}/contact`**, only for a chatting (`ACCEPTED`) enquiry or the deal winner, only to the listing owner or the interested user. Never add them to listing/interest/need/chat/notification payloads. The one exception is outside the API: the admin enquiry alert email carries the enquirer's address (reply-to), by decision.
 - Never log or return passwords, tokens, DB URLs, Cloudinary secrets, or stack traces. Error `detail` strings are user-facing – keep them generic for server faults.
 - JWT decoding keeps the algorithm pinned; password hashing stays Argon2id. CORS origins stay an explicit list – never `*`.
 - Admin mutations call `log_admin_action(...)` before `db.commit()`.

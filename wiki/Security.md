@@ -87,13 +87,14 @@ The SPA is on a different origin from the API, so API headers do not protect it.
 
 ## Rate limiting
 
-See [API Reference](API-Reference.md#rate-limits). In-memory, per process, bounded to 10 000 tracked keys. Not shared across Cloud Run instances (max 3) and reset on restart, so the effective global limit is up to `limit × instances`.
+See [API Reference](API-Reference.md#rate-limits). In-memory, per process, bounded to 10 000 tracked keys. Chat, polling and deal/report/block actions are limited **per signed-in user** instead of per IP, because many trainees share one campus address. Not shared across Cloud Run instances (max 3) and reset on restart, so the effective global limit is up to `limit × instances`.
 
 ## Secrets handling
 
 | Secret | Where it lives | Notes |
 | --- | --- | --- |
-| `SECRET_KEY`, `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `CLOUDINARY_*` | Google Secret Manager → injected as env vars into Cloud Run (`--set-secrets`) | Never built into the image or the SPA |
+| `SECRET_KEY`, `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `CLOUDINARY_*` | Set by hand on the Cloud Run service. The owner reports plain environment variables (not verified here); the deploy workflow does not set or change them. Moving them to Secret Manager references is the intended hardening | Never built into the image or the SPA. As plain variables they are readable by anyone with view access to the Cloud Run service |
+| `EMAIL_API_KEY` (Brevo), `SENDER_EMAIL`, `ADMIN_EMAIL` | Set by hand on the Cloud Run service; the deploy workflow leaves them alone | Server-side only. Until set, `EMAIL_PROVIDER` stays `console` and emails are printed to the log |
 | `CLOUDFLARE_API_TOKEN` | GitHub Actions secret | Scoped to Pages deploy |
 | GCP access from GitHub | Workload Identity Federation (OIDC) | No long-lived service-account key |
 | `VITE_API_BASE_URL` | GitHub variable / Pages setting | **Public** by nature (embedded in the bundle) |
