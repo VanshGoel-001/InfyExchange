@@ -4,13 +4,16 @@
 
 export const LIMITS = {
   name: [2, 100],
-  phone: [10, 15],
+  // People may type spaces, hyphens or a +91 prefix; normalizePhone() reduces that to the bare number.
+  phoneInput: 25,
   password: [8, 100],
   title: [2, 150],
   location: [2, 100],
   description: [2, 2000],
   duration: [0, 100],
   message: [0, 500],
+  chatMessage: 1000,
+  report: [5, 500],
   images: 5,
   imageBytes: 5 * 1024 * 1024,
   // The database stores whole rupees in a 32-bit column; this keeps typos from turning into a server error.
@@ -62,10 +65,15 @@ const password = (value) => {
   return '';
 };
 
+// Same rule as the server (backend/app/utils/phone.py): strip spaces, hyphens and a leading +91.
+export const normalizePhone = (value) => {
+  const text = String(value ?? '').replace(/[\s-]/g, '');
+  return text.startsWith('+91') ? text.slice(3) : text;
+};
+
 const phone = (value) => {
-  const text = String(value ?? '').trim();
-  if (!text) return 'Enter your phone number.';
-  return /^\d{10,15}$/.test(text) ? '' : 'Enter 10 to 15 digits, numbers only.';
+  if (!String(value ?? '').trim()) return 'Enter your phone number.';
+  return /^[6-9][0-9]{9}$/.test(normalizePhone(value)) ? '' : 'Enter a valid 10-digit mobile number.';
 };
 
 const joiningDate = (value) => {
@@ -133,6 +141,10 @@ export const validateNeed = (v) =>
   });
 
 export const validateInterest = (v) => compact({ message: length(v.message, 'the message', LIMITS.message) });
+
+export const validatePriceEdit = (v) => compact({ price: amount(v.price, 'the price', { required: true }) });
+
+export const validateReport = (v) => compact({ reason: length(v.reason, 'what went wrong', LIMITS.report) });
 
 // Turn a failed request into per-field messages plus one general message.
 // The backend reports validation problems as "field: message" strings (see api.js).

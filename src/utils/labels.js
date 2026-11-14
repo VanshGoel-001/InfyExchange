@@ -47,7 +47,7 @@ export const ROLES = [
 export const LISTING_STATUSES = [
   { value: 'ACTIVE', label: 'Available', tone: 'status' },
   { value: 'SOLD', label: 'Sold', tone: 'pink' },
-  { value: 'RENTED', label: 'Rented out', tone: 'purple' },
+  { value: 'RENTED', label: 'Lent out', tone: 'purple' },
   { value: 'UNAVAILABLE', label: 'Unavailable', tone: 'pending' },
 ];
 
@@ -57,11 +57,27 @@ export const NEED_STATUSES = [
   { value: 'CLOSED', label: 'Closed', tone: 'pending' },
 ];
 
+// The API stores ACCEPTED and REJECTED; people read them as Chatting and Declined.
 export const INTEREST_STATUSES = [
-  { value: 'PENDING', label: 'Waiting for reply', tone: 'pending' },
-  { value: 'ACCEPTED', label: 'Accepted', tone: 'status' },
+  { value: 'PENDING', label: 'Pending', tone: 'pending' },
+  { value: 'ACCEPTED', label: 'Chatting', tone: 'status' },
   { value: 'REJECTED', label: 'Declined', tone: 'pink' },
+  { value: 'CLOSED', label: 'Closed', tone: 'blue' },
 ];
+
+// How the owner words "I closed the deal with this person", by what the item was on offer as.
+export const CLOSE_DEAL_VERBS = { SELL: 'Sold to', RENT: 'Rented to', LEND: 'Lent to', GIVEAWAY: 'Given to' };
+
+// One-tap replies the owner can attach when declining.
+export const DECLINE_REPLIES = [
+  'Already given to someone else',
+  'No longer available',
+  'Price is not negotiable',
+  'Sorry, not a good fit',
+];
+
+// A chat exists while the owner is chatting with someone, and with the one person the deal closed with.
+export const hasChat = (enquiry) => enquiry.status === 'ACCEPTED' || (enquiry.status === 'CLOSED' && !!enquiry.deal_closed_at);
 
 export const RENT_UNITS = [
   { value: 'hour', label: 'Per hour' },

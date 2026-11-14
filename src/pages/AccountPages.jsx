@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Inbox, Megaphone, Package, Pencil, Send } from 'lucide-react';
+import { ChevronDown, Inbox, Megaphone, Package, Pencil, Send } from 'lucide-react';
 import { AppShell } from '../components/Layout';
 import { Banner, Field, Flash, FormError, Pill } from '../components/Ui';
 import { api } from '../services/api';
@@ -9,16 +9,19 @@ import { useForm } from '../hooks/useForm';
 import { NeedCard, ProductCard } from '../components/Cards';
 import { SkeletonCard } from '../components/ErrorBoundary';
 import {
+  DECLINE_REPLIES,
   INTEREST_STATUSES,
   LISTING_STATUSES,
   ROLES,
   daysLeft,
   formatDate,
+  formatPrice,
+  hasChat,
   initials,
   labelOf,
   toneOf,
 } from '../utils/labels';
-import { todayISO, validateProfileEdit } from '../utils/validate';
+import { todayISO, validatePriceEdit, validateProfileEdit } from '../utils/validate';
 
 function EditProfileForm({ user, token, onDone }) {
   const { setUser } = useAuth();
@@ -173,10 +176,10 @@ export function ActivityPage() {
     if (token) load();
   }, [token]);
 
-  const respond = async (item, action) => {
+  const respond = async (item, action, reply) => {
     if (
       action === 'accept' &&
-      !window.confirm(`Accept ${item.interested_user_name}'s enquiry? You will both be able to see each other's phone and email.`)
+      !window.confirm(`Accept ${item.interested_user_name}'s enquiry? A chat opens, and you will both be able to see each other's phone and email.`)
     ) {
       return;
     }
@@ -184,8 +187,9 @@ export function ActivityPage() {
     setError('');
     setNotice('');
     try {
-      await api[action](item.id, token);
-      setNotice(action === 'accept' ? 'Enquiry accepted. You can now see each other’s contact details.' : 'Enquiry declined.');
+      if (action === 'accept') await api.accept(item.id, token);
+      else await api.reject(item.id, token, reply);
+      setNotice(action === 'accept' ? 'Enquiry accepted. You can chat now.' : 'Enquiry declined.');
       load();
     } catch (e) {
       setError(e.message);
@@ -216,12 +220,15 @@ export function MyListingsPage() {
   const { token } = useAuth();
   const [items, setItems] = useState([]);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Returns the promise so a caller can show its notice only once the list is up to date.
   const load = () => {
     setLoading(true);
-    api
+    return api
       .myListings(token)
       .then(setItems)
       .catch((e) => setError(e.message))
@@ -233,12 +240,29 @@ export function MyListingsPage() {
   }, [token]);
 
   const remove = async (item) => {
-    if (!window.confirm(`Delete “${item.title}”? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete “${item.title}”? Everyone with an open enquiry will be told it was removed and their chat ends. This cannot be undone.`)) return;
     setBusy(item.id);
     setError('');
+    setNotice('');
     try {
       await api.deleteListing(item.id, token);
       load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const markReturned = async (item) => {
+    if (!window.confirm(`Mark “${item.title}” as returned? It will be available again.`)) return;
+    setBusy(item.id);
+    setError('');
+    setNotice('');
+    try {
+      await api.markReturned(item.id, token);
+      await load();
+      setNotice(`“${item.title}” is available again.`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -255,6 +279,7 @@ export function MyListingsPage() {
         <Link className="primary" to="/listings/new">Post an item</Link>
       </div>
       {error && <p role="alert" className="error">{error}</p>}
+      {notice && <p role="status" className="flash">{notice}</p>}
 
       {loading ? (
         <div className="my-items-grid">
@@ -271,8 +296,25 @@ export function MyListingsPage() {
                 <Pill tone={toneOf(LISTING_STATUSES, item.status)}>{labelOf(LISTING_STATUSES, item.status)}</Pill>
                 {item.status === 'ACTIVE' && <small>{daysLeft(item.expires_at)}</small>}
               </div>
+              {editing === item.id && (
+                <PriceEditor
+                  item={item}
+                  token={token}
+                  onDone={async (message) => {
+                    setEditing(null);
+                    if (message) await load();
+                    setNotice(message);
+                  }}
+                />
+              )}
               <div className="my-item-actions">
                 <Link className="outline" to={`/listings/${item.id}`}>View</Link>
+                {item.status === 'ACTIVE' && ['SELL', 'RENT'].includes(item.listing_type) && editing !== item.id && (
+                  <button className="outline" onClick={() => { setNotice(''); setEditing(item.id); }}>Edit price</button>
+                )}
+                {item.status === 'RENTED' && (
+                  <button className="outline" disabled={busy === item.id} onClick={() => markReturned(item)}>Mark returned</button>
+                )}
                 <button className="danger" disabled={busy === item.id} onClick={() => remove(item)}>
                   {busy === item.id ? 'Deleting…' : 'Delete'}
                 </button>
@@ -290,6 +332,30 @@ export function MyListingsPage() {
         </section>
       )}
     </AppShell>
+  );
+}
+
+/** The price is the one thing that can change after posting. */
+function PriceEditor({ item, token, onDone }) {
+  const form = useForm({ price: String(item.price) }, validatePriceEdit, ['price']);
+
+  const save = form.handleSubmit(async (values) => {
+    const price = Number(values.price);
+    await api.updatePrice(item.id, price, token);
+    onDone(`Price updated to ${formatPrice(price, item.price_unit)}.`);
+  });
+
+  return (
+    <form className="price-editor" onSubmit={save} noValidate>
+      <Field label="New price (₹)" error={form.error('price')} hint="People already chatting with you will be told.">
+        <input {...form.bind('price')} inputMode="numeric" />
+      </Field>
+      <FormError>{form.formError}</FormError>
+      <div className="button-row">
+        <button className="primary compact" disabled={form.busy}>{form.busy ? 'Saving…' : 'Save price'}</button>
+        <button type="button" className="outline compact" onClick={() => onDone('')} disabled={form.busy}>Cancel</button>
+      </div>
+    </form>
   );
 }
 
@@ -359,12 +425,11 @@ function Requests({ items, loading, onRespond, busy, token }) {
                 <button className="primary compact" disabled={busy === item.id} onClick={() => onRespond(item, 'accept')}>
                   Accept
                 </button>
-                <button className="danger compact" disabled={busy === item.id} onClick={() => onRespond(item, 'reject')}>
-                  Decline
-                </button>
+                <DeclineButton busy={busy === item.id} onDecline={(reply) => onRespond(item, 'reject', reply)} />
               </div>
             )}
-            {item.status === 'ACCEPTED' && <ContactReveal interestId={item.id} token={token} />}
+            {hasChat(item) && <ChatLink item={item} />}
+            {hasChat(item) && <ContactReveal interestId={item.id} token={token} />}
           </div>
         </div>
       ))}
@@ -386,11 +451,13 @@ function SentRequests({ items, loading, token }) {
               <Link to={`/listings/${item.listing_id}`}>{item.listing_title}</Link>
             </b>
             <p>{item.message ? `“${item.message}”` : 'No message'}</p>
+            {item.decline_reply && <p>They said: “{item.decline_reply}”</p>}
             <small>{formatDate(item.created_at)}</small>
           </div>
           <div className="request-side">
             <Pill tone={toneOf(INTEREST_STATUSES, item.status)}>{labelOf(INTEREST_STATUSES, item.status)}</Pill>
-            {item.status === 'ACCEPTED' && <ContactReveal interestId={item.id} token={token} />}
+            {hasChat(item) && <ChatLink item={item} />}
+            {hasChat(item) && <ContactReveal interestId={item.id} token={token} />}
           </div>
         </div>
       ))}
@@ -403,12 +470,62 @@ function SentRequests({ items, loading, token }) {
   );
 }
 
+/** Opens the chat for an enquiry; the badge counts messages from the other person you have not read. */
+function ChatLink({ item }) {
+  return (
+    <Link className="outline compact" to={`/chats/${item.id}`}>
+      Open chat
+      {item.unread_count > 0 && (
+        <span className="badge" aria-label={`${item.unread_count} unread`}>
+          {item.unread_count}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+/** One tap declines. The arrow beside it offers quick replies that are sent along with the decline. */
+function DeclineButton({ busy, onDecline }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="decline-split">
+      <button className="danger compact" disabled={busy} onClick={() => onDecline()}>
+        Decline
+      </button>
+      <button
+        className="danger compact caret"
+        disabled={busy}
+        aria-label="Decline with a reply"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ChevronDown aria-hidden="true" />
+      </button>
+      {open && (
+        <span className="decline-menu">
+          {DECLINE_REPLIES.map((reply) => (
+            <button
+              key={reply}
+              onClick={() => {
+                setOpen(false);
+                onDecline(reply);
+              }}
+            >
+              {reply}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /**
- * Reveals the other person's contact details after a request is accepted.
+ * Reveals the other person's contact details once the enquiry is accepted.
  * Nothing is fetched until the click, so details are not loaded for every row.
  * The server still checks that the request is accepted and that you are one of the two people.
  */
-function ContactReveal({ interestId, token }) {
+export function ContactReveal({ interestId, token }) {
   const [state, setState] = useState('idle'); // idle | loading | revealed | error
   const [contact, setContact] = useState(null);
   const [error, setError] = useState('');

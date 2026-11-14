@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import * as I from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import NotificationBell from "./NotificationBell";
+import { Toast } from "./Ui";
 import logoSvg from "../assets/InfyExchange-logo-v2.svg";
 import { ROLES, formatDate, initials, labelOf } from "../utils/labels";
 export function Logo() {
@@ -35,6 +37,8 @@ export function Header() {
     closeMobile();
   };
   return (
+    <>
+    <Toast />
     <header>
       <Logo />
       <button
@@ -88,6 +92,7 @@ export function Header() {
               </div>
             </details>
           )}
+          <NotificationBell />
           <div className="account-menu">
             <button
               className="account-trigger"
@@ -130,6 +135,7 @@ export function Header() {
         </div>
       )}
     </header>
+    </>
   );
 }
 export function Footer() {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeftRight, CircleCheck, IndianRupee, MapPin, Sparkles, Tag } from 'lucide-react';
 import { Header } from '../components/Layout';
@@ -128,19 +128,24 @@ export function ListingsPage() {
   const initial = Object.fromEntries(keys.map((k) => [k, params.get(k) || '']));
   const [filters, setFilters] = useState(initial);
 
+  // Only the newest request may update the screen: a slow answer to an earlier search must not overwrite it.
+  const latest = useRef(0);
+
   const load = async (query) => {
+    const ticket = ++latest.current;
     setLoading(true);
     try {
       setError('');
       const clean = Object.fromEntries(Object.entries(query).filter(([key, value]) => key !== 'scope' && value !== ''));
       const data = mine ? await api.myListings(token) : await api.listings({ limit: 100, ...clean });
       const filtered = mine && Object.keys(clean).length ? applyClientFilters(data, clean) : data;
-      setItems(filtered);
+      if (ticket === latest.current) setItems(filtered);
     } catch (err) {
+      if (ticket !== latest.current) return;
       setItems([]);
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (ticket === latest.current) setLoading(false);
     }
   };
 
@@ -291,7 +296,7 @@ function InterestPanel({ item, id }) {
         <h2>Enquiry sent</h2>
         <p>
           {item.owner_name?.split(' ')[0] || 'The owner'} will see it under “Enquiries”. If they accept,
-          their contact details unlock for you on that page.
+          you can chat and see their contact details there.
         </p>
         <Link className="outline" to="/activity">See my enquiries</Link>
       </div>
@@ -320,13 +325,17 @@ export function DetailPage() {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
+    let current = true; // ignore the answer if the person has moved to another item meanwhile
     setLoading(true);
     setNotice('');
     api
       .listing(id)
-      .then(setItem)
-      .catch((e) => setNotice(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => current && setItem(data))
+      .catch((e) => current && setNotice(e.message))
+      .finally(() => current && setLoading(false));
+    return () => {
+      current = false;
+    };
   }, [id]);
 
   if (loading) {

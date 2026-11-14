@@ -13,6 +13,9 @@ export class ApiError extends Error {
 
 const NETWORK_MESSAGE = 'Could not reach InfyExchange. Check your internet connection and try again.';
 const SERVER_MESSAGE = 'Something went wrong on our side. Please try again in a moment.';
+const TIMEOUT_MESSAGE = 'InfyExchange took too long to answer. Check your connection and try again.';
+const REQUEST_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 // The backend answers validation failures with either one "field: message" string or a list of them.
 // FastAPI's own shape (a list of { loc, msg } objects) is handled too.
@@ -60,9 +63,22 @@ export async function request(path, { token, body, headers, retries = 0, ...opti
   };
 
   const executeRequest = async (attempt = 0) => {
+    // Without a deadline, one lost answer leaves a form "busy" forever. A photo upload gets longer.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+    // The caller's own cancel (e.g. leaving the posting page) must still cancel the request.
+    const onCallerAbort = () => controller.abort();
+    if (options.signal?.aborted) controller.abort();
+    options.signal?.addEventListener('abort', onCallerAbort, { once: true });
+
     try {
       const response = await fetch(`${API_BASE}${path}`, {
         ...options,
+        signal: controller.signal,
         headers: requestHeaders,
         body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
       });
@@ -80,8 +96,9 @@ export async function request(path, { token, body, headers, retries = 0, ...opti
         throw new ApiError(message, response.status, data, fields);
       }
 
-      return response.status === 204 ? null : response.json();
+      return response.status === 204 ? null : await response.json();
     } catch (err) {
+      if (timedOut) throw new ApiError(TIMEOUT_MESSAGE, 0);
       const offline = err.name === 'TypeError' || err.message === 'Failed to fetch';
       // Retry idempotently on transient network connection drops (up to retries count)
       if (attempt < retries && offline) {
@@ -90,10 +107,27 @@ export async function request(path, { token, body, headers, retries = 0, ...opti
       }
       if (offline) throw new ApiError(NETWORK_MESSAGE, 0);
       throw err;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onCallerAbort);
     }
   };
 
   return executeRequest();
+}
+
+// The API serves at most 100 rows a page (20 if no limit is sent), so a person with more
+// enquiries, items or requests than that would silently not see the rest. Keep asking until a page comes back short.
+const PAGE_SIZE = 100;
+const MAX_PAGES = 20;
+async function requestAll(path, token) {
+  const items = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const batch = await request(`${path}?limit=${PAGE_SIZE}&skip=${page * PAGE_SIZE}`, { token, retries: 1 });
+    items.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return items;
 }
 
 export const api = {
@@ -111,21 +145,39 @@ export const api = {
   listings: (query) => request(`/listings${query ? `?${new URLSearchParams(query)}` : ''}`, { retries: 1 }),
   listing: (id) => request(`/listings/${id}`, { retries: 1 }),
   createListing: (body, token, signal) => request('/listings', { method: 'POST', body, token, signal }),
-  myListings: (token) => request('/listings/me', { token, retries: 1 }),
+  myListings: (token) => requestAll('/listings/me', token),
   deleteListing: (id, token) => request(`/listings/${id}`, { method: 'DELETE', token }),
+  // The price is the only thing an owner can change after posting.
+  updatePrice: (id, price, token) => request(`/listings/${id}`, { method: 'PUT', body: { price }, token }),
+  markReturned: (id, token) => request(`/listings/${id}/mark-returned`, { method: 'POST', token }),
 
   // Needs
   needs: (query) => request(`/needs${query ? `?${new URLSearchParams(query)}` : ''}`, { retries: 1 }),
   createNeed: (body, token, signal) => request('/needs', { method: 'POST', body, token, signal }),
-  myNeeds: (token) => request('/needs/me', { token, retries: 1 }),
+  myNeeds: (token) => requestAll('/needs/me', token),
 
   // Interests & Interactions
   createInterest: (id, body, token) => request(`/interests/listing/${id}`, { method: 'POST', body, token }),
-  sent: (token) => request('/interests/sent', { token, retries: 1 }),
-  received: (token) => request('/interests/received', { token, retries: 1 }),
+  sent: (token) => requestAll('/interests/sent', token),
+  received: (token) => requestAll('/interests/received', token),
   accept: (id, token) => request(`/interests/${id}/accept`, { method: 'PATCH', token }),
-  reject: (id, token) => request(`/interests/${id}/reject`, { method: 'PATCH', token }),
+  reject: (id, token, reply) => request(`/interests/${id}/reject`, { method: 'PATCH', body: reply ? { reply } : undefined, token }),
+  closeDeal: (id, token) => request(`/interests/${id}/close-deal`, { method: 'POST', token }),
+  stillAvailable: (id, token) => request(`/interests/${id}/still-available`, { method: 'POST', token }),
+  answerReceived: (id, received, token) => request(`/interests/${id}/received`, { method: 'POST', body: { received }, token }),
   contact: (id, token) => request(`/interests/${id}/contact`, { token }),
+
+  // Chat on an accepted enquiry
+  chat: (id, afterId, token) => request(`/interests/${id}/chat?after_id=${afterId}`, { token }),
+  sendMessage: (id, body, token) => request(`/interests/${id}/messages`, { method: 'POST', body: { body }, token }),
+  reportUser: (id, reason, token) => request(`/interests/${id}/report`, { method: 'POST', body: { reason }, token }),
+  blockUser: (id, token) => request(`/interests/${id}/block`, { method: 'POST', token }),
+  unblockUser: (id, token) => request(`/interests/${id}/block`, { method: 'DELETE', token }),
+
+  // Notification bell
+  notifications: (token) => request('/notifications?limit=20', { token }),
+  readNotification: (id, token) => request(`/notifications/${id}/read`, { method: 'POST', token }),
+  readAllNotifications: (token) => request('/notifications/read-all', { method: 'POST', token }),
   summary: (token) => request('/users/me/summary', { token, retries: 1 }),
 
   // Admin Control Plane
@@ -137,5 +189,9 @@ export const api = {
   adminDeleteListing: (id, token) => request(`/admin/listings/${id}`, { method: 'DELETE', token }),
   adminNeeds: (query, token) => request(`/admin/needs${query ? `?${new URLSearchParams(query)}` : ''}`, { token }),
   adminDeleteNeed: (id, token) => request(`/admin/needs/${id}`, { method: 'DELETE', token }),
+  adminReports: (token) => request('/admin/reports', { token }),
+  adminFailedEmails: (token) => request('/admin/failed-emails', { token }),
+  adminRetryEmail: (id, token) => request(`/admin/failed-emails/${id}/retry`, { method: 'POST', token }),
+  adminDiscardEmail: (id, token) => request(`/admin/failed-emails/${id}`, { method: 'DELETE', token }),
   adminAuditLogs: (query, token) => request(`/admin/audit-logs${query ? `?${new URLSearchParams(query)}` : ''}`, { token }),
 };

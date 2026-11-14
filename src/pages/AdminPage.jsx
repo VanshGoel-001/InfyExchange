@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Inbox, LayoutDashboard, Megaphone, Package, ScrollText, Users } from 'lucide-react';
+import { Flag, Inbox, LayoutDashboard, Mail, Megaphone, Package, ScrollText, Users } from 'lucide-react';
 import { AppShell } from '../components/Layout';
 import { Banner, Pill } from '../components/Ui';
 import { useAuth } from '../context/AuthContext';
@@ -12,6 +12,8 @@ const TABS = [
   ['users', 'Members', Users],
   ['listings', 'Items', Package],
   ['needs', 'Requests', Megaphone],
+  ['reports', 'Reports', Flag],
+  ['emails', 'Failed emails', Mail],
   ['audit', 'Admin log', ScrollText],
 ];
 
@@ -20,6 +22,8 @@ const LOG_ACTIONS = {
   UPDATE_LISTING_STATUS: 'Changed an item’s availability',
   DELETE_LISTING: 'Deleted an item',
   DELETE_NEED: 'Deleted a request',
+  RETRY_EMAIL: 'Retried a failed email',
+  DISCARD_EMAIL: 'Discarded a failed email',
 };
 
 // "{"title":"Racket","old_status":"ACTIVE","new_status":"SOLD"}" -> "Racket: Available → Sold"
@@ -34,6 +38,8 @@ function describeLog(log) {
   const parts = [];
   if (details.title) parts.push(`“${details.title}”`);
   if (details.email) parts.push(details.email);
+  if (details.subject) parts.push(`“${details.subject}”`);
+  if (details.result) parts.push(details.result === 'sent' ? 'Sent' : 'Failed again');
   if (details.old_status || details.new_status) {
     parts.push(`${labelOf(LISTING_STATUSES, details.old_status)} → ${labelOf(LISTING_STATUSES, details.new_status)}`);
   }
@@ -60,7 +66,7 @@ export default function AdminPage() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [rows, setRows] = useState({ users: null, listings: null, needs: null, audit: null });
+  const [rows, setRows] = useState({ users: null, listings: null, needs: null, reports: null, emails: null, audit: null });
   const [searchTerm, setSearchTerm] = useState('');
   const [busyId, setBusyId] = useState(null);
 
@@ -80,6 +86,8 @@ export default function AdminPage() {
         users: () => api.adminUsers(query, token),
         listings: () => api.adminListings(query, token),
         needs: () => api.adminNeeds(query, token),
+        reports: () => api.adminReports(token),
+        emails: () => api.adminFailedEmails(token),
         audit: () => api.adminAuditLogs(null, token),
       }[name]();
       setRows((current) => ({ ...current, [name]: data }));
@@ -159,6 +167,23 @@ export default function AdminPage() {
       call: () => api.adminDeleteNeed(need.id, token),
       done: `“${need.title}” was deleted.`,
       reload: 'needs',
+    });
+
+  const retryEmail = (mail) =>
+    act({
+      id: mail.id,
+      call: () => api.adminRetryEmail(mail.id, token),
+      done: 'The email was sent.',
+      reload: 'emails',
+    });
+
+  const discardEmail = (mail) =>
+    act({
+      id: mail.id,
+      confirm: `Discard “${mail.subject}” to ${mail.to_email}? It will not be sent. This is recorded in the Admin log.`,
+      call: () => api.adminDiscardEmail(mail.id, token),
+      done: 'The email was discarded.',
+      reload: 'emails',
     });
 
   const loading = (name) => rows[name] == null && !error;
@@ -303,6 +328,56 @@ export default function AdminPage() {
           </div>
           {loading('needs') && <p className="empty">Loading…</p>}
           {rows.needs && !rows.needs.items.length && <p className="empty">No requests found.</p>}
+        </section>
+      )}
+
+      {tab === 'reports' && (
+        <section className="panel table">
+          <h2>Reports <small>({rows.reports?.total ?? '…'})</small></h2>
+          <div className="table-scroll">
+            <div className="table-head" style={{ '--cols': '1fr 1fr 1.6fr 2fr' }}>
+              <span>When</span><span>Reported by</span><span>About</span><span>What they said</span>
+            </div>
+            {rows.reports?.items.map((report) => (
+              <div className="table-row" key={report.id} style={{ '--cols': '1fr 1fr 1.6fr 2fr' }}>
+                <small>{formatDateTime(report.created_at)}</small>
+                <b>{report.reporter_name}</b>
+                <span>
+                  {report.reported_name} <small>{report.reported_email}</small>
+                  {report.listing_title && <small> · {report.listing_title}</small>}
+                </span>
+                <small className="wrap">{report.reason}</small>
+              </div>
+            ))}
+          </div>
+          {loading('reports') && <p className="empty">Loading…</p>}
+          {rows.reports && !rows.reports.items.length && <p className="empty">No one has been reported.</p>}
+        </section>
+      )}
+
+      {tab === 'emails' && (
+        <section className="panel table">
+          <h2>Failed emails <small>({rows.emails?.total ?? '…'})</small></h2>
+          <p className="form-lead">Emails the provider would not accept. Retry sends the same message again; Discard drops it. Unresolved ones are removed after 30 days.</p>
+          <div className="table-scroll">
+            <div className="table-head" style={{ '--cols': '1fr 1.8fr 1.8fr .5fr 1.3fr' }}>
+              <span>When</span><span>To and subject</span><span>Why it failed</span><span>Tries</span><span />
+            </div>
+            {rows.emails?.items.map((mail) => (
+              <div className="table-row" key={mail.id} style={{ '--cols': '1fr 1.8fr 1.8fr .5fr 1.3fr' }}>
+                <small>{formatDateTime(mail.created_at)}</small>
+                <span>{mail.to_email} <small>{mail.subject}</small></span>
+                <small className="wrap">{mail.error}</small>
+                <span>{mail.attempts}</span>
+                <span className="button-row">
+                  <button className="primary compact" disabled={busyId === mail.id} onClick={() => retryEmail(mail)}>Retry</button>
+                  <button className="danger compact" disabled={busyId === mail.id} onClick={() => discardEmail(mail)}>Discard</button>
+                </span>
+              </div>
+            ))}
+          </div>
+          {loading('emails') && <p className="empty">Loading…</p>}
+          {rows.emails && !rows.emails.items.length && <p className="empty">No failed emails.</p>}
         </section>
       )}
 

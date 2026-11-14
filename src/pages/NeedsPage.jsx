@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Header } from '../components/Layout';
 import { Banner } from '../components/Ui';
@@ -22,20 +22,26 @@ export default function NeedsPage() {
   const [error, setError] = useState('');
   const [applied, setApplied] = useState(false);
 
+  // Only the newest request may update the screen: a slow answer to an earlier search must not overwrite it.
+  const latest = useRef(0);
+
   const load = async (nextFilters = filters) => {
+    const ticket = ++latest.current;
     setLoading(true);
     try {
       setError('');
       const query = Object.fromEntries(Object.entries(nextFilters).filter(([, value]) => value));
       const data = mine ? await api.myNeeds(token) : await api.needs({ limit: 100, ...query });
       const filtered = mine && Object.keys(query).length ? applyClientFilters(data, query) : data;
+      if (ticket !== latest.current) return;
       setItems(filtered);
       setApplied(Object.keys(query).length > 0);
     } catch (requestError) {
+      if (ticket !== latest.current) return;
       setItems([]);
       setError(requestError.message);
     } finally {
-      setLoading(false);
+      if (ticket === latest.current) setLoading(false);
     }
   };
 

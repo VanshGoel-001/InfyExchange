@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Check, Eye, EyeOff, Plus } from 'lucide-react';
 
 const BANNER_ART = { need: '💭 🏸 🏓', activity: '📋 🤝 💬', sports: '🏸 ⚽ 🏓' };
@@ -74,6 +74,39 @@ export function FormError({ children }) {
 export function Flash() {
   const { state } = useLocation();
   return state?.notice ? <p role="status" className="flash">{state.notice}</p> : null;
+}
+
+const TOAST_MS = 12000;
+
+/**
+ * A floating message handed over by the previous page: navigate(path, { state: { toast } }).
+ * It dismisses itself, and clears the history entry so a page refresh does not show it again.
+ */
+export function Toast() {
+  const { state, pathname } = useLocation();
+  const navigate = useNavigate();
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (!state?.toast) return undefined;
+    setMessage(state.toast);
+    navigate(pathname, { replace: true, state: null });
+    return undefined;
+  }, [state, pathname, navigate]);
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = setTimeout(() => setMessage(''), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  if (!message) return null;
+  return (
+    <div role="status" className="toast">
+      <span>{message}</span>
+      <button type="button" aria-label="Dismiss message" onClick={() => setMessage('')}>×</button>
+    </div>
+  );
 }
 
 const LISTING_TIPS = [
