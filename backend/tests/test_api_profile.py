@@ -70,14 +70,22 @@ class TestCompleteProfile:
         assert user.phone is None
 
     @pytest.mark.parametrize("phone, ok", [
-        ("1" * 9, False), ("1" * 10, True), ("1" * 15, True), ("1" * 16, False),
-        ("98765abc10", False), ("+919876543210", False), ("", False),
+        ("9876543210", True), ("6000000000", True), ("+91 98765 43210", True), ("+919876543210", True),
+        ("1" * 10, False), ("5876543210", False), ("9" * 9, False), ("9" * 15, False), ("1" * 15, False),
+        ("919876543210", False), ("98765abc10", False), ("\u096f\u096d\u096c\u096b\u096a\u0969\u0968\u0967\u0966\u0965", False), ("", False),
     ])
     def test_phone_format(self, client, db_session, phone, ok):
-        """TC-API-PRF-005 | AC-22.4 | T05 | boundary | digits only, 10 to 15 long"""
+        """TC-API-PRF-005 | AC-22.4 | T05 | boundary | only a 10-digit Indian mobile (6-9 first) passes, after stripping spaces and +91"""
         user = _google_user(db_session)
         status = client.post(COMPLETE, json=_details(phone=phone), headers=auth_headers(user)).status_code
         assert status == (200 if ok else 422)
+
+    def test_phone_is_saved_without_the_country_code(self, client, db_session):
+        """TC-API-PRF-014 | AC-22.4 | T05 | business | '+91 98765 43210' is stored as 9876543210"""
+        user = _google_user(db_session)
+        response = client.post(COMPLETE, json=_details(phone="+91 98765 43210"), headers=auth_headers(user))
+        assert response.status_code == 200
+        assert response.json()["phone"] == "9876543210"
 
     @pytest.mark.parametrize("overrides", [
         {"role": "ADMIN"}, {"role": "dse"}, {"role": ""},

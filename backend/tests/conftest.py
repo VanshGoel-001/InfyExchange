@@ -22,6 +22,10 @@ os.environ["CLOUDINARY_API_SECRET"] = "test-secret"
 os.environ["ENVIRONMENT"] = "test"
 os.environ["CORS_ORIGINS"] = "http://allowed.example"
 os.environ["ALLOWED_EMAIL_DOMAINS"] = "gmail.com"
+# A developer's real Brevo key in backend/.env must never be used by tests.
+os.environ["EMAIL_PROVIDER"] = "console"
+for _name in ("EMAIL_API_KEY", "SENDER_EMAIL", "ADMIN_EMAIL"):
+    os.environ[_name] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -30,6 +34,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app import database  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.database import Base  # noqa: E402
 from app.models import (  # noqa: E402,F401 - import registers all tables
     Interest,
@@ -62,6 +67,7 @@ async def _no_lifespan(app):
 
 from app.main import app  # noqa: E402 - must import after engine override
 from app.services.auth import create_access_token, hash_password  # noqa: E402
+from tests.support import LocalBrevoServer  # noqa: E402
 from app.utils.enums import (  # noqa: E402
     InterestStatus,
     ItemCondition,
@@ -90,6 +96,9 @@ def fresh_database():
         rate_limit.read_limiter,
         rate_limit.contact_limiter,
         rate_limit.admin_limiter,
+        rate_limit.chat_limiter,
+        rate_limit.action_limiter,
+        rate_limit.poll_limiter,
     ):
         limiter._requests.clear()
 
@@ -115,6 +124,11 @@ def client():
 # --- Factories -------------------------------------------------------------
 
 
+def _valid_phone() -> str:
+    """A random number that passes the Indian-mobile rule (starts with 9)."""
+    return "9" + str(uuid.uuid4().int)[:9]
+
+
 def make_user(
     db,
     email: str | None = None,
@@ -125,7 +139,7 @@ def make_user(
     user = User(
         name="Test User",
         email=email or f"user-{uuid.uuid4().hex[:12]}@gmail.com",
-        phone=str(uuid.uuid4().int)[:10],
+        phone=_valid_phone(),
         password_hash=hash_password(password),
         role=UserRole.SE,
         is_admin=is_admin,
@@ -188,8 +202,30 @@ def register_payload(email: str, password: str = "Passw0rd1") -> dict:
     return {
         "name": "New User",
         "email": email,
-        "phone": str(uuid.uuid4().int)[:10],
+        "phone": _valid_phone(),
         "password": password,
         "role": "SE",
         "joining_date": "2026-01-01",
     }
+
+
+@pytest.fixture()
+def brevo(monkeypatch):
+    """Switch email to the Brevo adapter and point it at a real local HTTP server.
+
+    Nothing in the application is patched: it builds and POSTs the request exactly as
+    in production, to 127.0.0.1 instead of api.brevo.com. Read what arrived from
+    ``brevo.requests``; make it fail by setting ``brevo.status``.
+    """
+    server = LocalBrevoServer()
+    server.start()
+
+    monkeypatch.setattr("app.services.email_service.BREVO_API_URL", server.url)
+    monkeypatch.setattr(settings, "email_provider", "brevo")
+    monkeypatch.setattr(settings, "email_api_key", "test-api-key")
+    monkeypatch.setattr(settings, "sender_email", "noreply@infyexchange.test")
+    monkeypatch.setattr(settings, "admin_email", "admin@infyexchange.test")
+
+    yield server
+
+    server.stop()

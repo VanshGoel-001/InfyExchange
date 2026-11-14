@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.utils.enums import UserRole
+from app.utils.phone import validate_indian_mobile
 
 
 class UserResponse(BaseModel):
@@ -32,11 +33,12 @@ class CompleteProfileRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    phone: str = Field(pattern=r"^\d{10,15}$")
+    phone: str = Field(max_length=25)
     role: UserRole
     joining_date: date
 
     _check_date = field_validator("joining_date")(_not_in_future)
+    _check_phone = field_validator("phone")(validate_indian_mobile)
 
 
 class ProfileUpdate(BaseModel):

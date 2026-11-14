@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.user import UserResponse
+from app.services import email_service
 from app.services.auth import (
     create_access_token,
     hash_password,
@@ -90,6 +91,7 @@ def _google_display_name(claims: dict, email: str) -> str:
 def register(
     data: RegisterRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
 
@@ -132,8 +134,24 @@ def register(
     )
 
     db.add(user)
-    db.commit()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        # A simultaneous registration won the race past the checks above.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Email or phone number already registered",
+        )
+
     db.refresh(user)
+
+    background_tasks.add_task(
+        email_service.send_welcome,
+        name=user.name,
+        email=user.email,
+    )
 
     return user
 

@@ -93,6 +93,11 @@ def client_key(request: Request, scope: str) -> str:
     return f"{scope}:{client_ip}"
 
 
+def user_key(user_id: int, scope: str) -> str:
+    """Per-account key for signed-in actions (campus users share an IP, so IP keys would collide)."""
+    return f"{scope}:user:{user_id}"
+
+
 def account_key(email: str) -> str:
     """Hashed per-account key so raw emails never enter limiter state or logs."""
     digest = hashlib.sha256(email.lower().encode()).hexdigest()[:32]
@@ -160,4 +165,26 @@ admin_limiter = InMemoryRateLimiter(
     settings.rate_limit_admin,
     _window,
     name="admin",
+)
+
+
+# Chat messages sent, per signed-in user
+chat_limiter = InMemoryRateLimiter(
+    settings.rate_limit_chat,
+    _window,
+    name="chat",
+)
+
+# Deal/enquiry state changes, reports, blocks and price edits, per signed-in user
+action_limiter = InMemoryRateLimiter(
+    settings.rate_limit_action,
+    _window,
+    name="action",
+)
+
+# Thread and notification polling, per signed-in user
+poll_limiter = InMemoryRateLimiter(
+    settings.rate_limit_poll,
+    _window,
+    name="poll",
 )

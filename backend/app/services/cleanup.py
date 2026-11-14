@@ -1,15 +1,20 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
 from app.database import SessionLocal
+from app.models.failed_email import FailedEmail
 from app.models.listing import Listing
 from app.models.need import Need
 from app.services.cloudinary import delete_image
+from app.utils.enums import ListingStatus
 
 logger = logging.getLogger(__name__)
+
+# Failed emails hold a recipient address and message body; drop the ones nobody acted on.
+FAILED_EMAIL_RETENTION_DAYS = 30
 
 
 def cleanup_expired_data():
@@ -21,7 +26,10 @@ def cleanup_expired_data():
 
         expired_listings = db.scalars(
             select(Listing).where(
-                Listing.expires_at <= now
+                Listing.expires_at <= now,
+                # An item that is out on loan is not abandoned; it is swept
+                # (or renewed) once it comes back.
+                Listing.status != ListingStatus.RENTED,
             )
         ).all()
 
@@ -50,6 +58,16 @@ def cleanup_expired_data():
         for need in expired_needs:
             db.delete(need)
 
+        stale_emails = db.scalars(
+            select(FailedEmail).where(
+                FailedEmail.created_at
+                <= now - timedelta(days=FAILED_EMAIL_RETENTION_DAYS)
+            )
+        ).all()
+
+        for failed_email in stale_emails:
+            db.delete(failed_email)
+
         db.commit()
 
         logger.info(
@@ -67,7 +85,9 @@ async def cleanup_loop():
     while True:
 
         try:
-            cleanup_expired_data()
+            # Off the event loop: it runs database queries and Cloudinary deletes,
+            # and while it ran on the loop every request in the server stalled.
+            await asyncio.to_thread(cleanup_expired_data)
 
         except Exception:
             logger.exception("Cleanup loop iteration failed.")

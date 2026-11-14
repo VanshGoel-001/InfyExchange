@@ -1,0 +1,6 @@
+<p>New enquiry on <b>{{ listing_title }}</b> (posted by {{ owner_name }}).</p>
+<p>
+  From: {{ sender_name }} &lt;{{ sender_email }}&gt;<br>
+  Message: {% if message %}{{ message }}{% else %}(no message){% endif %}
+</p>
+<p>Reply to this email to reach the sender.</p>

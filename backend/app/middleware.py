@@ -15,6 +15,7 @@ NO_STORE_PREFIXES = (
     "/api/auth",
     "/api/users/me",
     "/api/interests",
+    "/api/notifications",
     "/api/admin",
 )
 

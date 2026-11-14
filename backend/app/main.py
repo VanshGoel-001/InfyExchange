@@ -12,12 +12,15 @@ from app.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.routers import (
     admin,
     auth,
+    chat,
     interests,
     listings,
     needs,
+    notifications,
     users,
 )
 from app.services.cleanup import cleanup_loop
+from app.services.maintenance import maintenance_loop
 from app.services.migration import apply_migrations
 from app.utils.logging_utils import get_security_logger, setup_logging
 
@@ -40,14 +43,19 @@ async def lifespan(app: FastAPI):
         cleanup_loop()
     )
 
+    maintenance_task = asyncio.create_task(
+        maintenance_loop()
+    )
+
     yield
 
-    cleanup_task.cancel()
+    for task in (cleanup_task, maintenance_task):
+        task.cancel()
 
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     security_logger.info("service_stopped")
 
@@ -135,6 +143,8 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(listings.router)
 app.include_router(interests.router)
+app.include_router(chat.router)
+app.include_router(notifications.router)
 app.include_router(needs.router)
 app.include_router(admin.router)
 

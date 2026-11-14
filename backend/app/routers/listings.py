@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Annotated
@@ -12,7 +13,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import (
     Session,
     joinedload,
@@ -22,6 +23,7 @@ from sqlalchemy.orm import (
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_complete_user, get_current_user
+from app.models.interest import Interest
 from app.models.listing import Listing
 from app.models.listing_image import ListingImage
 from app.models.user import User
@@ -34,12 +36,16 @@ from app.services.cloudinary import (
     delete_image,
     upload_image,
 )
+from app.services.notify import notify, short
 from app.services.rate_limit import (
+    action_limiter,
     client_key,
     create_limiter,
     read_limiter,
+    user_key,
 )
 from app.utils.enums import (
+    InterestStatus,
     ItemCondition,
     ListingCategory,
     ListingStatus,
@@ -114,7 +120,8 @@ async def create_listing(
     title: str = Form(..., min_length=2, max_length=150),
     category: ListingCategory = Form(...),
     listing_type: ListingType = Form(...),
-    price: int = Form(0, ge=0),
+    # Upper bound mirrors the SPA and keeps the value inside PostgreSQL's 32-bit integer.
+    price: int = Form(0, ge=0, le=10_000_000),
     price_unit: str | None = Form(None, max_length=30),
     condition: ItemCondition = Form(...),
     location: str = Form(..., min_length=2, max_length=100),
@@ -133,6 +140,24 @@ async def create_listing(
         client_key(request, "create-listing"),
         "Too many listings created. Please try again later.",
     )
+
+    # The length limits above count spaces, so "   " would pass and be saved as nothing.
+    title, location, description = (
+        title.strip(),
+        location.strip(),
+        description.strip(),
+    )
+
+    for field, value in (
+        ("title", title),
+        ("location", location),
+        ("description", description),
+    ):
+        if len(value) < 2:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{field}: needs at least 2 characters, not counting spaces",
+            )
 
     if len(images) > settings.max_images_per_listing:
         raise HTTPException(
@@ -238,7 +263,12 @@ async def create_listing(
         )
 
         for public_id in uploaded_images:
-            delete_image(public_id)
+            try:
+                # Off the event loop: a Cloudinary call can take seconds.
+                await asyncio.to_thread(delete_image, public_id)
+            except Exception:
+                # Keep going so the half-created listing is still removed below.
+                logger.exception("Could not delete uploaded image %s", public_id)
 
         db.delete(listing)
         db.commit()
@@ -410,6 +440,11 @@ def update_listing(
     db: Session = Depends(get_db),
 ):
 
+    action_limiter.enforce(
+        user_key(current_user.id, "edit-listing"),
+        "Too many requests. Please try again later.",
+    )
+
     listing = db.get(Listing, listing_id)
 
     if not listing:
@@ -424,12 +459,120 @@ def update_listing(
             detail="You can only edit your own listing",
         )
 
-    updates = data.model_dump(
-        exclude_unset=True
+    if listing.status != ListingStatus.ACTIVE:
+        raise HTTPException(
+            status_code=400,
+            detail="Only available items can be edited",
+        )
+
+    if listing.listing_type not in {
+        ListingType.SELL,
+        ListingType.RENT,
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="Free items have no price to change",
+        )
+
+    old_price = listing.price
+
+    if data.price != old_price:
+        listing.price = data.price
+
+        unit = f" / {listing.price_unit}" if listing.price_unit else ""
+
+        # Only people already chatting need to hear about it; pending
+        # enquirers see the current price on the item page.
+        chatting = db.scalars(
+            select(Interest).where(
+                Interest.listing_id == listing.id,
+                Interest.status == InterestStatus.ACCEPTED,
+            )
+        ).all()
+
+        for interest in chatting:
+            notify(
+                db,
+                interest.interested_user_id,
+                "price_changed",
+                f"The price of \"{short(listing.title)}\" changed from "
+                f"Rs {old_price}{unit} to Rs {data.price}{unit}.",
+                interest.id,
+            )
+
+        db.commit()
+        db.refresh(listing)
+
+    return _serialize_listing(listing)
+
+
+@router.post(
+    "/{listing_id}/mark-returned",
+    response_model=ListingResponse,
+)
+def mark_returned(
+    listing_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A rented or lent item is back: make it Available again."""
+
+    action_limiter.enforce(
+        user_key(current_user.id, "mark-returned"),
+        "Too many requests. Please try again later.",
     )
 
-    for key, value in updates.items():
-        setattr(listing, key, value)
+    listing = db.get(Listing, listing_id)
+
+    if not listing:
+        raise HTTPException(
+            status_code=404,
+            detail="Listing not found",
+        )
+
+    if listing.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only update your own listing",
+        )
+
+    if listing.status != ListingStatus.RENTED:
+        raise HTTPException(
+            status_code=400,
+            detail="This item is not out on loan",
+        )
+
+    now = datetime.utcnow()
+
+    borrower_deal = db.scalar(
+        select(Interest)
+        .where(
+            Interest.listing_id == listing.id,
+            Interest.deal_closed_at.is_not(None),
+            Interest.returned_at.is_(None),
+        )
+        .order_by(Interest.deal_closed_at.desc())
+        .limit(1)
+    )
+
+    if borrower_deal is not None:
+        borrower_deal.returned_at = now
+        notify(
+            db,
+            borrower_deal.interested_user_id,
+            "item_returned",
+            f"\"{short(listing.title)}\" was marked as returned. Thank you!",
+            borrower_deal.id,
+        )
+
+    listing.status = ListingStatus.ACTIVE
+
+    # A long loan can outlive the listing's 30 days; without this the
+    # "Available" item would vanish from search and be swept by cleanup.
+    if listing.expires_at <= now:
+        listing.expires_at = now + timedelta(
+            days=settings.listing_expiry_days
+        )
 
     db.commit()
     db.refresh(listing)
@@ -458,6 +601,32 @@ def delete_listing(
         raise HTTPException(
             status_code=403,
             detail="You can only delete your own listing",
+        )
+
+    # Closing the enquiries is deleting them with the listing; tell the
+    # people who were still waiting or chatting (or borrowing it) first.
+    affected = db.scalars(
+        select(Interest).where(
+            Interest.listing_id == listing.id,
+            or_(
+                Interest.status.in_(
+                    [InterestStatus.PENDING, InterestStatus.ACCEPTED]
+                ),
+                and_(
+                    Interest.deal_closed_at.is_not(None),
+                    Interest.returned_at.is_(None),
+                ),
+            ),
+        )
+    ).all()
+
+    for interest in affected:
+        # No interest_id: the enquiry is deleted along with the listing.
+        notify(
+            db,
+            interest.interested_user_id,
+            "listing_removed",
+            f"\"{short(listing.title)}\" was removed by the seller.",
         )
 
     for image in listing.images:

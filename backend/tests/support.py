@@ -13,7 +13,10 @@ where <kind> is one of: positive, negative, boundary, business.
 """
 
 import itertools
+import json
+import threading
 from datetime import datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from app.models import Interest, Listing, ListingImage, Need
 from app.utils.enums import (
@@ -152,11 +155,13 @@ def add_interest(db, listing, user, status: InterestStatus = InterestStatus.PEND
 class FakeCloudinary:
     """Records calls instead of talking to Cloudinary.
 
-    ``fail_on`` holds 1-based upload call numbers that should raise ValueError.
+    ``fail_on`` holds 1-based upload call numbers that should raise ValueError;
+    ``delete_raises`` makes every delete raise, like a Cloudinary outage.
     """
 
-    def __init__(self, fail_on=()):
+    def __init__(self, fail_on=(), delete_raises=False):
         self.fail_on = set(fail_on)
+        self.delete_raises = delete_raises
         self.upload_calls = 0
         self.deleted: list[str] = []
 
@@ -171,12 +176,64 @@ class FakeCloudinary:
         }
 
     def delete(self, public_id):
+        if self.delete_raises:
+            raise RuntimeError("simulated Cloudinary outage")
         self.deleted.append(public_id)
 
 
-def install_fake_cloudinary(monkeypatch, fail_on=()) -> FakeCloudinary:
+def install_fake_cloudinary(monkeypatch, fail_on=(), delete_raises=False) -> FakeCloudinary:
     """Patch the Cloudinary functions as imported by the listings router."""
-    fake = FakeCloudinary(fail_on)
+    fake = FakeCloudinary(fail_on, delete_raises)
     monkeypatch.setattr("app.routers.listings.upload_image", fake.upload)
     monkeypatch.setattr("app.routers.listings.delete_image", fake.delete)
     return fake
+
+
+class LocalBrevoServer:
+    """A real HTTP server on 127.0.0.1 standing in for Brevo's API.
+
+    The application really POSTs to it over a socket. Each request is kept in
+    ``requests`` as ``{"path", "headers", "json"}`` and answered with ``status``
+    and ``reply``. It checks what *we* send; it says nothing about how the real
+    Brevo behaves, which needs a live API key to test.
+    """
+
+    def __init__(self):
+        self.requests: list[dict] = []
+        self.status = 201
+        self.reply: dict = {"messageId": "<test@infyexchange>"}
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                outer.requests.append(
+                    {
+                        "path": self.path,
+                        "headers": {k.lower(): v for k, v in self.headers.items()},
+                        "json": json.loads(body),
+                    }
+                )
+                payload = json.dumps(outer.reply).encode()
+                self.send_response(outer.status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_address[1]}/v3/smtp/email"
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._server.shutdown()
+        self._server.server_close()

@@ -36,14 +36,45 @@ class TestRegisterRequestSchema:
             with pytest.raises(ValidationError):
                 _register(name=name)
 
-    @pytest.mark.parametrize("phone, ok", [("1" * 9, False), ("1" * 10, True), ("1" * 15, True), ("1" * 16, False)])
-    def test_phone_length(self, phone, ok):
-        """TC-VAL-REG-002 | AC-01.5 | T05 | boundary | phone must be 10-15 characters"""
-        if ok:
+    @pytest.mark.parametrize(
+        "phone, expected",
+        [
+            ("9876543210", "9876543210"),
+            ("6000000000", "6000000000"),
+            ("+919876543210", "9876543210"),
+            ("+91 98765 43210", "9876543210"),
+            ("+91-98765-43210", "9876543210"),
+            ("98 76 54 32 10", "9876543210"),
+            ("  9876543210  ", "9876543210"),
+        ],
+    )
+    def test_phone_is_normalized_to_ten_digits(self, phone, expected):
+        """TC-VAL-REG-002 | AC-01.5 | T05 | positive | spaces, hyphens and a leading +91 are stripped; the 10-digit number is kept"""
+        assert _register(phone=phone).phone == expected
+
+    @pytest.mark.parametrize(
+        "phone",
+        [
+            "5876543210",          # must start with 6-9
+            "0987654321",
+            "987654321",           # 9 digits
+            "98765432101",         # 11 digits
+            "919876543210",        # 12 digits: 91 without the +
+            "9" * 15,              # the old 15-digit maximum
+            "1" * 15,
+            "+1 9876543210",       # other country code
+            "+91 +91 9876543210",
+            "98765abcde",
+            "\u096f\u096d\u096c\u096b\u096a\u0969\u0968\u0967\u0966\u0965",  # Devanagari digits
+            "9\u096f76543210",     # ASCII mixed with Devanagari
+            "9876543210" + "9" * 20,  # over the length cap
+            "",
+        ],
+    )
+    def test_phone_that_is_not_an_indian_mobile_is_rejected(self, phone):
+        """TC-VAL-REG-003 | AC-01.5 | T05 | negative | anything but 10 digits starting 6-9 (after stripping) is rejected, including 15-digit and non-ASCII digits"""
+        with pytest.raises(ValidationError):
             _register(phone=phone)
-        else:
-            with pytest.raises(ValidationError):
-                _register(phone=phone)
 
     @pytest.mark.parametrize(
         "password, ok",
@@ -127,9 +158,9 @@ class TestNeedCreateSchema:
             with pytest.raises(ValidationError):
                 _need(**{field: "x" * length})
 
-    @pytest.mark.parametrize("budget, ok", [(-1, False), (0, True), (1, True), (10**9, True)])
+    @pytest.mark.parametrize("budget, ok", [(-1, False), (0, True), (1, True), (10_000_000, True), (10_000_001, False), (10**9, False)])
     def test_budget_must_not_be_negative(self, budget, ok):
-        """TC-VAL-NED-002 | AC-08.2 | T11 | boundary | budget >= 0"""
+        """TC-VAL-NED-002 | AC-08.2 | T11 | boundary | budget 0 to 10,000,000 (the cap keeps the value inside the database integer column)"""
         if ok:
             assert _need(budget=budget).budget == budget
         else:
@@ -149,37 +180,35 @@ class TestNeedCreateSchema:
 
 
 class TestListingUpdateSchema:
-    def test_all_fields_are_optional(self):
-        """TC-VAL-LST-001 | AC-07.1 | T08 | boundary | an empty update is valid and carries no fields"""
-        assert ListingUpdate().model_dump(exclude_unset=True) == {}
+    def test_price_is_the_only_field_and_it_is_required(self):
+        """TC-VAL-LST-001 | AC-07.1 | T08 | boundary | an update with no price is invalid; with one it carries just the price"""
+        with pytest.raises(ValidationError):
+            ListingUpdate()
+        assert ListingUpdate(price=5).model_dump() == {"price": 5}
 
-    @pytest.mark.parametrize("title, ok", [("a", False), ("ab", True), ("x" * 150, True), ("x" * 151, False)])
-    def test_title_length(self, title, ok):
-        """TC-VAL-LST-002 | AC-07.3 | T08 | boundary | title 2-150 characters when supplied"""
-        if ok:
-            assert ListingUpdate(title=title).title == title
-        else:
-            with pytest.raises(ValidationError):
-                ListingUpdate(title=title)
+    @pytest.mark.parametrize(
+        "field, value",
+        [("title", "New title"), ("status", "SOLD"), ("location", "x"), ("description", "x"), ("condition", "GOOD"), ("price_unit", "day")],
+    )
+    def test_other_fields_are_locked(self, field, value):
+        """TC-VAL-LST-002 | AC-07.3 | T08 | negative | any field other than price is rejected rather than silently ignored"""
+        with pytest.raises(ValidationError):
+            ListingUpdate(price=5, **{field: value})
 
-    @pytest.mark.parametrize("price, ok", [(-1, False), (0, True), (1, True)])
-    def test_price_not_negative(self, price, ok):
-        """TC-VAL-LST-003 | AC-07.3 | T08 | boundary | price >= 0 when supplied"""
+    @pytest.mark.parametrize("price, ok", [(-1, False), (0, False), (1, True), (10_000_000, True), (10_000_001, False)])
+    def test_price_range(self, price, ok):
+        """TC-VAL-LST-003 | AC-07.3 | T08 | boundary | price is a whole number from 1 to 10,000,000"""
         if ok:
             assert ListingUpdate(price=price).price == price
         else:
             with pytest.raises(ValidationError):
                 ListingUpdate(price=price)
 
-    @pytest.mark.parametrize("overrides", [{"status": "DELETED"}, {"condition": "BROKEN"}, {"price": "free"}])
-    def test_invalid_values_are_rejected(self, overrides):
-        """TC-VAL-LST-004 | AC-07.3 | T08 | negative | unknown enum values and non-numeric price fail"""
+    @pytest.mark.parametrize("price", ["free", 1.5, None])
+    def test_non_integer_prices_are_rejected(self, price):
+        """TC-VAL-LST-004 | AC-07.3 | T08 | negative | non-numeric, fractional or null prices fail"""
         with pytest.raises(ValidationError):
-            ListingUpdate(**overrides)
-
-    def test_only_supplied_fields_are_reported(self):
-        """TC-VAL-LST-005 | AC-07.1 | T08 | business | exclude_unset yields just the fields the client sent"""
-        assert ListingUpdate(title="New title", price=5).model_dump(exclude_unset=True) == {"title": "New title", "price": 5}
+            ListingUpdate(price=price)
 
 
 class TestInterestCreateSchema:

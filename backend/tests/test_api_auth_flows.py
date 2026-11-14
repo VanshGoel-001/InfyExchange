@@ -120,6 +120,28 @@ class TestRegisterApi:
         assert _register(client, "dup2@gmail.com").status_code == 201
         assert _register(client, "DUP2@GMAIL.COM").status_code == 409
 
+    @pytest.mark.parametrize("typed", ["+91 98765 43210", "+919876543210", "98765 43210", " 9876543210 "])
+    def test_phone_is_stored_as_the_bare_ten_digits(self, client, typed):
+        """TC-API-REG-020 | AC-01.5 | T05 | business | spaces and +91 are stripped before saving, so the response and the database hold 9876543210"""
+        response = _register(client, "norm@gmail.com", phone=typed)
+        assert response.status_code == 201
+        assert response.json()["phone"] == "9876543210"
+
+    @pytest.mark.parametrize("phone", ["9" * 15, "1" * 15, "1234567890", "919876543210", "12345", "\u096f\u096d\u096c\u096b\u096a\u0969\u0968\u0967\u0966\u0965"])
+    def test_non_indian_or_malformed_phone_is_rejected(self, client, phone):
+        """TC-API-REG-021 | AC-01.5 | T05 | negative | 15-digit, wrong-prefix, 12-digit and non-ASCII-digit numbers give 422 and create no account"""
+        response = _register(client, "bad@gmail.com", phone=phone)
+        assert response.status_code == 422
+        assert response.json()["detail"].startswith("phone")
+        assert client.post("/api/auth/login", json={"email": "bad@gmail.com", "password": "Passw0rd1"}).status_code == 401
+
+    def test_same_number_in_another_format_is_a_duplicate(self, client):
+        """TC-API-REG-022 | AC-01.3 | T05 | negative | '+91 98765 43210' collides with an existing 9876543210 (409), because uniqueness is checked after normalizing"""
+        assert _register(client, "n1@gmail.com", phone="9876543210").status_code == 201
+        response = _register(client, "n2@gmail.com", phone="+91 98765 43210")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Phone number already registered"
+
     def test_duplicate_phone_conflicts(self, client):
         """TC-API-REG-012 | AC-01.3 | T05 | negative | a different email with an already-used phone gets 409"""
         assert _register(client, "p1@gmail.com", phone="9990001112").status_code == 201

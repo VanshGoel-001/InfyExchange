@@ -4,6 +4,7 @@ import re
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.utils.enums import UserRole
+from app.utils.phone import validate_indian_mobile
 
 
 class RegisterRequest(BaseModel):
@@ -11,10 +12,8 @@ class RegisterRequest(BaseModel):
 
     email: EmailStr
 
-    phone: str = Field(
-        min_length=10,
-        max_length=15,
-    )
+    # Accepts "+91 98765 43210" and friends; stored as the bare 10-digit number.
+    phone: str = Field(max_length=25)
 
     password: str = Field(
         min_length=8,
@@ -24,6 +23,11 @@ class RegisterRequest(BaseModel):
     role: UserRole
 
     joining_date: date
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_indian_mobile(cls, value: str) -> str:
+        return validate_indian_mobile(value)
 
     @field_validator("password")
     @classmethod

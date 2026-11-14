@@ -32,7 +32,7 @@ def test_horizontal_escalation_listing_update_blocked(client, db_session):
 
     response = client.put(
         f"/api/listings/{listing.id}",
-        json={"title": "Hijacked title"},
+        json={"price": 1},
         headers=auth_headers(attacker),
     )
 
@@ -58,12 +58,12 @@ def test_owner_can_update_own_listing(client, db_session):
 
     response = client.put(
         f"/api/listings/{listing.id}",
-        json={"title": "Legitimate update"},
+        json={"price": 150},
         headers=auth_headers(owner),
     )
 
     assert response.status_code == 200
-    assert response.json()["title"] == "Legitimate update"
+    assert response.json()["price"] == 150
 
 
 def test_vertical_escalation_admin_stats_blocked(client, db_session):

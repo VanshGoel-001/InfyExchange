@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -42,9 +42,51 @@ class Interest(Base):
         nullable=False,
     )
 
+    # Optional one-line reply the owner attached when declining.
+    decline_reply: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
+
+    # Last chat message or owner action; drives the 48-hour "close the deal?" reminder.
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    # Set on the one enquiry the owner closed the deal with (the others are closed without it).
+    deal_closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    # Rent/lend only: when the item came back and the listing went live again.
+    returned_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    # The buyer's optional answer to "Did you get it?"; NULL = not answered.
+    received_confirmed: Mapped[bool | None] = mapped_column(
+        Boolean,
+        nullable=True,
+    )
+
     listing = relationship(
         "Listing",
         back_populates="interests",
+    )
+
+    messages = relationship(
+        "Message",
+        back_populates="interest",
+        cascade="all, delete-orphan",
+        order_by="Message.id",
     )
 
     interested_user = relationship(

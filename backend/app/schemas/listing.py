@@ -45,23 +45,13 @@ class ListingDetailResponse(ListingResponse):
 
 
 class ListingUpdate(BaseModel):
-    title: str | None = Field(
-        default=None,
-        min_length=2,
-        max_length=150,
-    )
+    """The only thing an owner can change after posting is the price.
 
-    price: int | None = Field(
-        default=None,
-        ge=0,
-    )
+    Everything else is locked so people who already enquired are not misled;
+    unknown fields are a 422 rather than silently ignored.
+    """
 
-    price_unit: str | None = None
+    model_config = ConfigDict(extra="forbid")
 
-    condition: ItemCondition | None = None
-
-    location: str | None = None
-
-    description: str | None = None
-
-    status: ListingStatus | None = None
+    # Whole rupees; the upper bound mirrors the SPA (src/utils/validate.js) and the 32-bit column.
+    price: int = Field(ge=1, le=10_000_000)

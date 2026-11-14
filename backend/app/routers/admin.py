@@ -6,15 +6,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 from app.database import get_db
 from app.dependencies import get_current_admin
 from app.models.audit_log import AuditLog
+from app.models.failed_email import FailedEmail
 from app.models.interest import Interest
 from app.models.listing import Listing
 from app.models.need import Need
+from app.models.report import Report
 from app.models.user import User
+from app.services import email_service
 from app.services.rate_limit import admin_limiter, rate_limit_dependency
 from app.utils.enums import InterestStatus, ListingStatus, NeedStatus
 
@@ -171,6 +174,9 @@ def update_user_status(
 
     if target_user.id == current_admin.id and payload.is_admin is False:
         raise HTTPException(status_code=400, detail="Cannot revoke your own admin rights.")
+
+    if target_user.id == current_admin.id and payload.is_active is False:
+        raise HTTPException(status_code=400, detail="Cannot deactivate your own account.")
 
     changes = {}
     if payload.is_active is not None and payload.is_active != target_user.is_active:
@@ -399,3 +405,177 @@ def get_audit_logs(
             for log in logs
         ],
     }
+
+
+@router.get("/reports")
+def get_reports(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Chat reports filed by users, newest first. Read-only, so nothing to audit."""
+
+    reporter = aliased(User)
+    reported = aliased(User)
+
+    total = db.scalar(select(func.count(Report.id))) or 0
+
+    rows = db.execute(
+        select(Report, reporter, reported, Listing.title)
+        .join(reporter, reporter.id == Report.reporter_id)
+        .join(reported, reported.id == Report.reported_user_id)
+        .outerjoin(Interest, Interest.id == Report.interest_id)
+        .outerjoin(Listing, Listing.id == Interest.listing_id)
+        .order_by(desc(Report.created_at))
+        .offset(skip)
+        .limit(limit)
+    ).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": report.id,
+                "reporter_name": reporter_user.name,
+                "reported_user_id": reported_user.id,
+                "reported_name": reported_user.name,
+                "reported_email": reported_user.email,
+                "listing_title": listing_title,
+                "reason": report.reason,
+                "created_at": report.created_at,
+            }
+            for report, reporter_user, reported_user, listing_title in rows
+        ],
+    }
+
+
+@router.get("/failed-emails")
+def get_failed_emails(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Emails the provider could not deliver, waiting for an admin to retry or discard them."""
+
+    total = db.scalar(select(func.count(FailedEmail.id))) or 0
+    rows = db.scalars(
+        select(FailedEmail)
+        .order_by(desc(FailedEmail.created_at))
+        .offset(skip)
+        .limit(limit)
+    ).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": row.id,
+                "to_email": row.to_email,
+                "subject": row.subject,
+                "error": row.error,
+                "attempts": row.attempts,
+                "created_at": row.created_at,
+                "last_attempt_at": row.last_attempt_at,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/failed-emails/{email_id}/retry")
+async def retry_failed_email(
+    email_id: int,
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    record = db.get(FailedEmail, email_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    adapter = email_service.get_adapter()
+
+    # With no provider configured the console adapter would "succeed" and the
+    # row would be deleted without anything having been delivered.
+    if isinstance(adapter, email_service.ConsoleEmailAdapter):
+        raise HTTPException(
+            status_code=409,
+            detail="Email sending is not configured on this server, so there is nothing to retry.",
+        )
+
+    message = email_service.EmailMessage(
+        to_email=record.to_email,
+        to_name=record.to_name,
+        subject=record.subject,
+        html=record.html,
+        reply_to_email=record.reply_to_email,
+        reply_to_name=record.reply_to_name,
+    )
+
+    ip_address = request.client.host if request.client else None
+
+    try:
+        await adapter.send(message)
+    except Exception as exc:
+        logger.exception("Retry of failed email %s failed again.", email_id)
+
+        record.attempts += 1
+        record.last_attempt_at = datetime.utcnow()
+        record.error = f"{type(exc).__name__}: {exc}"[:300]
+
+        log_admin_action(
+            db=db,
+            actor_id=current_admin.id,
+            action="RETRY_EMAIL",
+            target_type="EMAIL",
+            target_id=str(email_id),
+            ip_address=ip_address,
+            details={"subject": record.subject, "result": "failed"},
+        )
+        db.commit()
+
+        raise HTTPException(
+            status_code=502,
+            detail="The email provider did not accept it again. Check the provider settings, then retry or discard.",
+        ) from exc
+
+    log_admin_action(
+        db=db,
+        actor_id=current_admin.id,
+        action="RETRY_EMAIL",
+        target_type="EMAIL",
+        target_id=str(email_id),
+        ip_address=ip_address,
+        details={"subject": record.subject, "result": "sent"},
+    )
+    db.delete(record)
+    db.commit()
+
+    return {"message": "Email sent", "email_id": email_id}
+
+
+@router.delete("/failed-emails/{email_id}")
+def discard_failed_email(
+    email_id: int,
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    record = db.get(FailedEmail, email_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    log_admin_action(
+        db=db,
+        actor_id=current_admin.id,
+        action="DISCARD_EMAIL",
+        target_type="EMAIL",
+        target_id=str(email_id),
+        ip_address=request.client.host if request.client else None,
+        details={"subject": record.subject},
+    )
+    db.delete(record)
+    db.commit()
+
+    return {"message": "Email discarded", "email_id": email_id}
+

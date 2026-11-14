@@ -391,47 +391,92 @@ class TestMyListings:
 
 
 class TestUpdateListing:
-    def test_owner_partial_update_changes_only_given_fields(self, client, db_session):
-        """TC-API-LST-070 | AC-07.1 | T08 | positive | PUT with {title, price} updates those and leaves the rest unchanged"""
+    """Owners can change the price and nothing else (see ListingUpdate)."""
+
+    def test_owner_can_change_the_price(self, client, db_session):
+        """TC-API-LST-070 | AC-07.1 | T08 | positive | PUT {price} updates the price and leaves every other field unchanged"""
         owner = make_user(db_session)
         listing = add_listing(db_session, owner, title="old", price=100, location="ECC")
-        response = client.put(f"{LISTINGS}/{listing.id}", json={"title": "new", "price": 250}, headers=auth_headers(owner))
+        response = client.put(f"{LISTINGS}/{listing.id}", json={"price": 250}, headers=auth_headers(owner))
         assert response.status_code == 200
         body = response.json()
-        assert (body["title"], body["price"], body["location"]) == ("new", 250, "ECC")
+        assert (body["title"], body["price"], body["location"], body["status"]) == ("old", 250, "ECC", "ACTIVE")
 
-    def test_empty_body_changes_nothing(self, client, db_session):
-        """TC-API-LST-071 | AC-07.1 | T08 | boundary | PUT {} is accepted and leaves the listing as it was"""
+    @pytest.mark.parametrize(
+        "body",
+        [{"title": "new"}, {"status": "SOLD"}, {"location": "elsewhere"}, {"description": "changed"},
+         {"condition": "POOR"}, {"price_unit": "week"}, {"price": 200, "title": "new"}],
+    )
+    def test_every_other_field_is_locked(self, client, db_session, body):
+        """TC-API-LST-071 | AC-07.1 | T08 | negative | any field besides price is rejected with 422 and nothing is saved"""
         owner = make_user(db_session)
-        listing = add_listing(db_session, owner, title="same")
-        response = client.put(f"{LISTINGS}/{listing.id}", json={}, headers=auth_headers(owner))
-        assert response.status_code == 200
-        assert response.json()["title"] == "same"
+        listing = add_listing(db_session, owner, title="same", price=100)
+        response = client.put(f"{LISTINGS}/{listing.id}", json=body, headers=auth_headers(owner))
+        assert response.status_code == 422
+        db_session.refresh(listing)
+        assert (listing.title, listing.price, listing.status) == ("same", 100, ListingStatus.ACTIVE)
 
-    def test_marking_sold_removes_it_from_browse(self, client, db_session):
-        """TC-API-LST-072 | AC-07.1, AC-05.1 | T08 | business | after the owner sets status SOLD the listing no longer appears in browse"""
+    def test_price_is_required(self, client, db_session):
+        """TC-API-LST-072 | AC-07.1 | T08 | negative | PUT {} is rejected: there is nothing to change"""
         owner = make_user(db_session)
         listing = add_listing(db_session, owner)
-        client.put(f"{LISTINGS}/{listing.id}", json={"status": "SOLD"}, headers=auth_headers(owner))
-        assert client.get(LISTINGS).json() == []
+        assert client.put(f"{LISTINGS}/{listing.id}", json={}, headers=auth_headers(owner)).status_code == 422
 
     def test_unknown_listing_is_404_and_anonymous_is_rejected(self, client, db_session):
         """TC-API-LST-073 | AC-07.2 | T08 | negative | PUT on a missing id is 404; PUT without a token is 401/403"""
         owner = make_user(db_session)
-        assert client.put(f"{LISTINGS}/999999", json={"title": "xx"}, headers=auth_headers(owner)).status_code == 404
+        assert client.put(f"{LISTINGS}/999999", json={"price": 5}, headers=auth_headers(owner)).status_code == 404
         listing = add_listing(db_session, owner)
-        assert client.put(f"{LISTINGS}/{listing.id}", json={"title": "xx"}).status_code in (401, 403)
+        assert client.put(f"{LISTINGS}/{listing.id}", json={"price": 5}).status_code in (401, 403)
 
     @pytest.mark.parametrize(
         "body, expected",
-        [({"title": "a"}, 422), ({"title": "ab"}, 200), ({"title": "x" * 150}, 200), ({"title": "x" * 151}, 422),
-         ({"price": -1}, 422), ({"price": 0}, 200), ({"status": "GONE"}, 422), ({"condition": "BROKEN"}, 422)],
+        [({"price": -1}, 422), ({"price": 0}, 422), ({"price": 1}, 200), ({"price": 10_000_000}, 200),
+         ({"price": 10_000_001}, 422), ({"price": "abc"}, 422), ({"price": 1.5}, 422)],
     )
-    def test_update_validation_boundaries(self, client, db_session, body, expected):
-        """TC-API-LST-074 | AC-07.3 | T08 | boundary | title 2-150, price >= 0, enum values validated on update"""
+    def test_price_boundaries(self, client, db_session, body, expected):
+        """TC-API-LST-074 | AC-07.3 | T08 | boundary | price must be a whole number from 1 to 10,000,000"""
         owner = make_user(db_session)
         listing = add_listing(db_session, owner)
         assert client.put(f"{LISTINGS}/{listing.id}", json=body, headers=auth_headers(owner)).status_code == expected
+
+    @pytest.mark.parametrize("status", [ListingStatus.SOLD, ListingStatus.RENTED, ListingStatus.UNAVAILABLE])
+    def test_only_available_items_can_be_edited(self, client, db_session, status):
+        """TC-API-LST-075 | AC-07.1 | T08 | negative | a sold, lent-out or unlisted item's price is frozen (400)"""
+        owner = make_user(db_session)
+        listing = add_listing(db_session, owner, status=status)
+        response = client.put(f"{LISTINGS}/{listing.id}", json={"price": 5}, headers=auth_headers(owner))
+        assert response.status_code == 400
+
+    @pytest.mark.parametrize("listing_type", [ListingType.LEND, ListingType.GIVEAWAY])
+    def test_free_items_have_no_price_to_change(self, client, db_session, listing_type):
+        """TC-API-LST-076 | AC-07.1 | T08 | negative | a lend or giveaway item cannot be given a price (400)"""
+        owner = make_user(db_session)
+        listing = add_listing(db_session, owner, listing_type=listing_type, price=0)
+        response = client.put(f"{LISTINGS}/{listing.id}", json={"price": 5}, headers=auth_headers(owner))
+        assert response.status_code == 400
+        db_session.refresh(listing)
+        assert listing.price == 0
+
+    def test_price_change_notifies_only_people_in_a_chat(self, client, db_session):
+        """TC-API-LST-077 | AC-07.1 | T08 | business | chatting buyers get an in-app notice; pending, declined and unchanged-price cases do not"""
+        from app.models import Notification
+
+        owner = make_user(db_session)
+        listing = add_listing(db_session, owner, price=100)
+        chatting, pending, declined = (make_user(db_session) for _ in range(3))
+        add_interest(db_session, listing, chatting, InterestStatus.ACCEPTED)
+        add_interest(db_session, listing, pending, InterestStatus.PENDING)
+        add_interest(db_session, listing, declined, InterestStatus.REJECTED)
+
+        headers = auth_headers(owner)
+        assert client.put(f"{LISTINGS}/{listing.id}", json={"price": 100}, headers=headers).status_code == 200
+        assert db_session.scalar(select(func.count()).select_from(Notification)) == 0
+
+        assert client.put(f"{LISTINGS}/{listing.id}", json={"price": 80}, headers=headers).status_code == 200
+        rows = db_session.scalars(select(Notification)).all()
+        assert [(n.user_id, n.kind) for n in rows] == [(chatting.id, "price_changed")]
+        assert "100" in rows[0].message and "80" in rows[0].message
 
 
 class TestDeleteListing:

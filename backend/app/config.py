@@ -1,4 +1,6 @@
 #config.py
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +37,21 @@ class Settings(BaseSettings):
     # Empty disables "Sign in with Google": the endpoint answers 503.
     google_client_id: str = ""
 
+    # --- Email ---
+    # "console" prints emails to the log (local dev, or no account yet); "brevo" sends them
+    # over HTTPS. An unknown value stops the app at startup instead of silently not sending.
+    email_provider: Literal["console", "brevo"] = "console"
+    email_api_key: str = ""
+    # Must be a sender verified in Brevo.
+    sender_email: str = ""
+    # Receives an alert for every enquiry.
+    admin_email: str = ""
+
+    # --- Enquiry timing ---
+    pending_enquiry_expiry_days: int = 7
+    chat_inactivity_reminder_hours: int = 48
+    maintenance_interval_seconds: int = 3600
+
     # --- Security headers ---
     referrer_policy: str = "strict-origin-when-cross-origin"
     permissions_policy: str = "camera=(), microphone=(), geolocation=(), payment=()"
@@ -57,6 +74,10 @@ class Settings(BaseSettings):
     rate_limit_read: int = 120
     rate_limit_contact: int = 20
     rate_limit_admin: int = 60
+    # Per signed-in user (not per IP: many trainees share one campus address).
+    rate_limit_chat: int = 30
+    rate_limit_action: int = 30
+    rate_limit_poll: int = 90
 
     model_config = SettingsConfigDict(
         env_file=".env",

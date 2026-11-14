@@ -43,9 +43,12 @@ class ListingStatus(str, Enum):
 
 
 class InterestStatus(str, Enum):
+    # The SPA shows ACCEPTED as "Chatting" and REJECTED as "Declined" (src/utils/labels.js);
+    # the stored values keep their original names so older code keeps working during a rollout.
     PENDING = "PENDING"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
+    CLOSED = "CLOSED"
 
 
 class NeedType(str, Enum):
