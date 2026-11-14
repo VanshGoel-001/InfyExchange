@@ -3940,35 +3940,108 @@ input[name=password] {
   max-width: 520px
 }
 
-/* Toast: a floating message that dismisses itself (see Toast in components/Ui.jsx) */
+/* Toast: a floating confirmation (see Toast in components/Ui.jsx) */
 .toast {
   position: fixed;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 24px;
+  bottom: 24px;
   z-index: 1000;
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   gap: 12px;
-  width: min(480px, calc(100vw - 32px));
-  padding: 12px 14px;
-  background: #fff8e1;
-  color: #5c4400;
-  border: 1px solid #f0d98a;
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, .18)
+  align-items: start;
+  width: min(400px, calc(100vw - 32px));
+  padding: 16px 12px 18px 16px;
+  background: #fff;
+  color: #1a2433;
+  border: 1px solid #e3e8ef;
+  border-left: 4px solid #0b7a46;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(16, 24, 40, .16), 0 2px 6px rgba(16, 24, 40, .08);
+  overflow: hidden;
+  animation: toast-in .28s ease-out
 }
 
-.toast span {
-  flex: 1
+.toast-icon {
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  color: #0b7a46
 }
 
-.toast button {
+.toast-body strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.3
+}
+
+.toast-body p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #52606f
+}
+
+.toast-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
   background: none;
   border: 0;
-  padding: 0 4px;
-  font-size: 20px;
-  line-height: 1;
-  color: inherit;
+  border-radius: 6px;
+  color: #6b7785;
   cursor: pointer
+}
+
+.toast-close:hover {
+  background: #f0f3f7;
+  color: #1a2433
+}
+
+.toast-close svg {
+  width: 16px;
+  height: 16px
+}
+
+.toast-timer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 3px;
+  background: #0b7a46;
+  opacity: .5;
+  transform-origin: left;
+  animation: toast-timer linear forwards
+}
+
+.toast:hover .toast-timer,
+.toast:focus-within .toast-timer {
+  animation-play-state: paused
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px) }
+  to { opacity: 1; transform: none }
+}
+
+@keyframes toast-timer {
+  from { transform: scaleX(1) }
+  to { transform: scaleX(0) }
+}
+
+@media (max-width: 600px) {
+  .toast {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none }
 }

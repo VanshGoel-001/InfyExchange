@@ -38,7 +38,7 @@ export default function AuthPage({ register = false }) {
     }
     await login({ email, password: values.password });
     // The welcome email often lands in spam, so say where to look.
-    navigate('/listings', register ? { state: { toast: 'Welcome! We sent you a welcome email. If you do not see it in your inbox, please check your spam folder.' } } : undefined);
+    navigate('/listings', register ? { state: { toast: { title: 'Account created', message: "We've sent a welcome email to your inbox. If you don't see it, please check your spam or junk folder." } } } : undefined);
   });
 
   const continueWithGoogle = async (credential) => {
@@ -46,7 +46,11 @@ export default function AuthPage({ register = false }) {
     form.setFormError('');
     try {
       const profile = await loginWithGoogle(credential);
-      navigate(profile.profile_complete ? '/listings' : '/complete-profile');
+      const first = profile.name.split(' ')[0];
+      const toast = profile.profile_complete
+        ? { title: 'Signed in', message: `Welcome back, ${first}.` }
+        : { title: `Welcome, ${first}`, message: "You're signed in with Google. Add a few details to start posting items and sending enquiries." };
+      navigate(profile.profile_complete ? '/listings' : '/complete-profile', { state: { toast } });
     } catch (err) {
       form.setFormError(err.message);
     } finally {

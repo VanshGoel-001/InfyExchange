@@ -33,7 +33,7 @@ The process fails at import if any of these is missing.
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 10080 | 7 days |
 | `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated **exact** origins; never `*`. Set to the Pages origin in production. (Vite dev runs on 5173 but proxies, so CORS is not used locally) |
 | `ALLOWED_EMAIL_DOMAINS` | `gmail.com` | Comma-separated; empty falls back to `gmail.com` |
-| `GOOGLE_CLIENT_ID` | empty | OAuth client ID of the Google Sign-In web client (public, not a secret). Empty switches "Sign in with Google" off (`POST /auth/google` answers `503`). Set it from the `GOOGLE_CLIENT_ID` GitHub variable: the deploy writes this one on every run (an empty GitHub variable blanks it), while other variables set by hand on the service are left alone (`--update-env-vars`) |
+| `GOOGLE_CLIENT_ID` | empty | OAuth client ID of the Google Sign-In web client (public, not a secret). Empty switches "Sign in with Google" off (`POST /auth/google` answers `503`). Set by hand on the Cloud Run service; the deploy workflow does not touch it |
 | `ALLOWED_HOSTS` | empty | If non-empty, enables `TrustedHostMiddleware` with this comma-separated list |
 
 ### Marketplace policy
@@ -124,13 +124,10 @@ Configured on the repository or the `neon-staging` environment.
 | `ARTIFACT_REGISTRY_REPOSITORY` | variable | Cloud Run workflow | Pre-created Docker repository |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | variable | Cloud Run workflow | Full WIF provider resource name |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | variable | Cloud Run workflow | Deployer service account email |
-| `CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT` | variable | Cloud Run workflow | Runtime service account email |
-| `CORS_ORIGINS` | variable | Cloud Run workflow | Exact Pages origin |
 | `CLOUDFLARE_ACCOUNT_ID` | variable | Pages workflow | Cloudflare account |
 | `CLOUDFLARE_PAGES_PROJECT` | variable | Pages workflow | Pages project name |
 | `VITE_API_BASE_URL` | variable | Pages workflow | `https://<api-host>/api` |
 | `VITE_GOOGLE_CLIENT_ID` | variable (optional) | Pages workflow | Google OAuth client ID; empty = no Google button |
-| `GOOGLE_CLIENT_ID` | variable (optional) | Cloud Run workflow | Same client ID for the API; empty = Google sign-in off |
 | `CLOUDFLARE_API_TOKEN` | **secret** | Pages workflow | Pages deploy token |
 
 Both workflows fail fast with a clear message if a required value is missing.
@@ -148,7 +145,7 @@ Both workflows fail fast with a clear message if a required value is missing.
 | `CLOUDINARY_API_KEY` | `CLOUDINARY_API_KEY` |
 | `CLOUDINARY_API_SECRET` | `CLOUDINARY_API_SECRET` |
 
-Plain env vars set at deploy: `ENVIRONMENT=production`, `CORS_ORIGINS`, `HSTS_ENABLED=true`, `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`.
+Environment variables on the Cloud Run service are set by hand; the deploy workflow does not set any. The values the project was designed with: `ENVIRONMENT=production`, `CORS_ORIGINS` (the exact Pages origin), `HSTS_ENABLED=true`, `DB_POOL_SIZE=3`, `DB_MAX_OVERFLOW=2`.
 
 ## Neon project config (`neon.ts`)
 

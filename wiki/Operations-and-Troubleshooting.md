@@ -90,7 +90,7 @@ Admin deletions do not remove Cloudinary assets ([Known Limitations](Known-Limit
 
 ## Capacity and connection budget
 
-- Cloud Run: 1 vCPU, 1 GiB, concurrency 40, max 3 instances (`--max 3`). Uvicorn also caps at 200 concurrent connections.
+- Cloud Run: sizing is set by hand on the service (the deploy workflow no longer sets it); the project was designed for 1 vCPU, 1 GiB, concurrency 40 and at most 3 instances. Uvicorn also caps at 200 concurrent connections.
 - Database: each instance may use up to `DB_POOL_SIZE + DB_MAX_OVERFLOW` = 3 + 2 = **5** connections → at most **15** across three instances, plus 1 short-lived connection per migration run. Check this against the Neon plan before raising `--max` or the pool sizes.
 - Sync route handlers run in Starlette's thread pool, so concurrency per instance is bounded by the thread pool and DB pool, not just the Cloud Run setting.
 - Rate-limit memory: ≤ 10 000 tracked keys per limiter instance.
@@ -108,7 +108,7 @@ Admin deletions do not remove Cloudinary assets ([Known Limitations](Known-Limit
 | Deploy fails at "Validate deployment settings" | A GitHub variable is empty | Add it (names in the error) |
 | Deploy fails at Trivy | Fixable HIGH/CRITICAL vuln in the base image or a dependency | Bump the dependency/base image (Dependabot may already have a PR); rebuild |
 | Pages build fails with `VITE_API_BASE_URL must end with "/api"` | Variable missing `/api` or has a trailing slash | Set `https://<api-host>/api` |
-| SPA loads but every API call fails with CORS | `CORS_ORIGINS` isn't the exact Pages origin (scheme + host, no trailing slash/path) | Fix the variable and redeploy the API |
+| SPA loads but every API call fails with CORS | `CORS_ORIGINS` isn't the exact Pages origin (scheme + host, no trailing slash/path) | Fix `CORS_ORIGINS` on the Cloud Run service (saving it starts a new revision) |
 | SPA deep links 404 | `_redirects` missing from the build | Ensure `public/_redirects` is present and `dist/` contains it |
 | New Cloud Run revision never becomes ready | Startup migration failed (production aborts) or a secret is missing/inaccessible | Read revision logs for `Database migrations failed`; verify runtime service account has secret access and the direct URL works |
 | `psycopg` connection / SSL errors | URL scheme not `postgresql+psycopg://` or `sslmode=require` missing | Fix the secret value |

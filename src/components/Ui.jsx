@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Check, Eye, EyeOff, Plus } from 'lucide-react';
+import { Check, CircleCheck, Eye, EyeOff, Plus, X } from 'lucide-react';
 
 const BANNER_ART = { need: '💭 🏸 🏓', activity: '📋 🤝 💬', sports: '🏸 ⚽ 🏓' };
 
@@ -79,32 +79,35 @@ export function Flash() {
 const TOAST_MS = 12000;
 
 /**
- * A floating message handed over by the previous page: navigate(path, { state: { toast } }).
- * It dismisses itself, and clears the history entry so a page refresh does not show it again.
+ * A floating confirmation handed over by the previous page:
+ *   navigate(path, { state: { toast: { title, message } } })
+ * It slides in, counts down on a thin bar (hovering or focusing it pauses the countdown), and can be closed.
+ * The history entry is cleared so a page refresh does not show it again.
  */
 export function Toast() {
   const { state, pathname } = useLocation();
   const navigate = useNavigate();
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState(null);
 
   useEffect(() => {
-    if (!state?.toast) return undefined;
-    setMessage(state.toast);
+    if (!state?.toast) return;
+    setToast({ ...state.toast, id: Date.now() });
     navigate(pathname, { replace: true, state: null });
-    return undefined;
   }, [state, pathname, navigate]);
 
-  useEffect(() => {
-    if (!message) return undefined;
-    const timer = setTimeout(() => setMessage(''), TOAST_MS);
-    return () => clearTimeout(timer);
-  }, [message]);
-
-  if (!message) return null;
+  if (!toast) return null;
+  const close = () => setToast(null);
   return (
-    <div role="status" className="toast">
-      <span>{message}</span>
-      <button type="button" aria-label="Dismiss message" onClick={() => setMessage('')}>×</button>
+    <div className="toast" role="status" aria-live="polite" key={toast.id}>
+      <CircleCheck className="toast-icon" aria-hidden="true" />
+      <div className="toast-body">
+        <strong>{toast.title}</strong>
+        <p>{toast.message}</p>
+      </div>
+      <button type="button" className="toast-close" aria-label="Dismiss message" onClick={close}>
+        <X aria-hidden="true" />
+      </button>
+      <span className="toast-timer" style={{ animationDuration: `${TOAST_MS}ms` }} onAnimationEnd={close} />
     </div>
   );
 }

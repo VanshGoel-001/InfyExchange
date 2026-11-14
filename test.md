@@ -1097,7 +1097,7 @@ Added after section 17, from requirements stated by the product owner in convers
 - Real Brevo delivery, sender verification and the free-tier daily limit.
 - The PostgreSQL advisory-lock branch of the maintenance job and the `SELECT ... FOR UPDATE` on close-deal (both are no-ops on SQLite).
 - Whether the background jobs actually run on a schedule on Cloud Run.
-- The deploy workflow (the email variables are not wired in yet).
+- The deploy workflow (it now only swaps the container image; all other service settings are managed by hand on Cloud Run). It has never completed a deploy: the GitHub repository variables it needs were empty on earlier runs.
 
 **Verified by hand (not in the suite)**
 - Migrations `c3a8f1d27b64` and `d5b2e9a14c70` on real PostgreSQL 17 in a scratch database: upgrade over existing data (an accepted enquiry survives and is backfilled), `CLOSED` added to the enum, `alembic check` reports no drift, downgrade then upgrade works.

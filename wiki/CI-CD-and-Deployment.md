@@ -57,17 +57,14 @@ Runs in the `neon-staging` GitHub environment with `id-token: write`; a concurre
 6. **Deploy** the same digest:
 
    ```text
-   gcloud run deploy $CLOUD_RUN_SERVICE --image $IMAGE --platform managed
-     --allow-unauthenticated --service-account $CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT
-     --port 8080 --memory 1Gi --cpu 1 --max 3 --concurrency 40
-     --update-env-vars ENVIRONMENT=production,CORS_ORIGINS=…,HSTS_ENABLED=true,DB_POOL_SIZE=3,DB_MAX_OVERFLOW=2,GOOGLE_CLIENT_ID=…
+   gcloud run deploy $CLOUD_RUN_SERVICE --image $IMAGE --project $GCP_PROJECT_ID --region $GCP_REGION
    ```
 
-   `--update-env-vars` only adds or changes the six names listed, so every other variable or secret on the service (the database URLs, `SECRET_KEY`, the Cloudinary and email settings) survives a deploy. The workflow sets **no secrets** and removes nothing: those values are managed by hand on the Cloud Run service. The service-level flags above (`--memory`, `--cpu`, `--max`, `--concurrency`, `--service-account`, `--allow-unauthenticated`) are still written on every deploy, so a hand-edit of those is overwritten.
+   The deploy changes **only the container image**. Every other setting of the service (environment variables, secrets, memory, CPU, concurrency, scaling, service account, public access) is managed by hand on Cloud Run and is left exactly as it is, so a push can never reset or remove something you set there. To change one, edit the service in the Cloud Run console.
 
 7. **Health check:** read the service URL and `curl --fail --retry 5 --retry-delay 5 <url>/health`.
 
-Secrets use `:latest`, so a new secret version takes effect on the next revision start/deploy. The container applies pending migrations at startup under an advisory lock (see [Data Model](Data-Model.md#migrations)); with `ENVIRONMENT=production` a failed migration stops the instance from starting, so Cloud Run will not route traffic to a bad revision.
+The container applies pending migrations at startup under an advisory lock (see [Data Model](Data-Model.md#migrations)); with `ENVIRONMENT=production` a failed migration stops the instance from starting, so Cloud Run will not route traffic to a bad revision.
 
 ## SPA deployment (`pages-deploy.yml`)
 
