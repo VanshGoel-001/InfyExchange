@@ -25,11 +25,9 @@ flowchart TD
       Cf[configuration-scan<br/>trivy misconfig + actionlint]
       Dc[deployment-config<br/>compose config + docker build]
     end
-    F & Bk & S & Q & Cf & Dc --> DR
-    DR[deploy-cloud-run<br/>only on deploy branch push<br/>environment: neon-staging] --> DP[deploy-pages<br/>needs deploy-cloud-run]
 ```
 
-The deploy jobs run only for a **push** to `refs/heads/deploy/neon-cloudrun-cloudflare-pages` and require `frontend`, `backend`, `deployment-config`, `secret-scan`, `codeql` and `configuration-scan` to pass. (`dependency-review` runs only on pull requests and is not a deploy prerequisite.) Pages deploys only if Cloud Run succeeds.
+`ci.yml` no longer deploys. Production is deployed outside GitHub Actions: a Cloud Build trigger on the deploy branch builds and deploys Cloud Run, and Cloudflare Pages builds from Git (the Pages setup is as reported by the owner, not verified here). Neither waits for CI. `cloud-run-deploy.yml` and `pages-deploy.yml` are kept but no job calls them, so the two sections below describe unused workflows. `dependency-review` runs only on pull requests.
 
 ## CI jobs in detail
 
@@ -84,9 +82,9 @@ Follow the [Security Runbook](../docs/security/SECURITY_RUNBOOK.md) (Google Clou
 
 ## Releasing
 
-1. Merge changes to the deploy branch (or push to it). CI runs; reviewers approve the `neon-staging` environment.
-2. Cloud Run deploys; the health check must pass.
-3. Pages deploys.
+1. Push to the deploy branch. CI runs; Cloud Build and Cloudflare Pages deploy on their own, with no approval step.
+2. Check the new Cloud Run revision is Ready and `/health` returns 200.
+3. Check the Pages deployment finished.
 4. Smoke test from the Pages origin: register/login, create a listing with an image, send and accept an interest, reveal contact, and (with an admin) open `/admin`. Confirm `/docs` returns 404 on the API and that CORS rejects another origin. Use synthetic accounts and data.
 
 ## Rollback

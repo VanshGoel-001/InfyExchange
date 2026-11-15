@@ -10,10 +10,10 @@ on:
 permissions:
   contents: read
 
-# Newest commit wins. The deploy branch never cancels a run in progress (it could stop a deploy halfway); it queues only the latest.
+# Newest commit wins: a new push cancels the older run on the same branch or PR.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/deploy/neon-cloudrun-cloudflare-pages' }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
@@ -141,20 +141,3 @@ jobs:
         run: docker compose config -q
       - name: Build Cloud Run container
         run: docker build --tag infyexchange-api:ci backend
-
-  deploy-cloud-run:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/deploy/neon-cloudrun-cloudflare-pages'
-    needs: [frontend, backend, deployment-config, secret-scan, codeql, configuration-scan]
-    permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/cloud-run-deploy.yml
-
-  deploy-pages:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/deploy/neon-cloudrun-cloudflare-pages'
-    needs: deploy-cloud-run
-    permissions:
-      contents: read
-    uses: ./.github/workflows/pages-deploy.yml
-    secrets:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

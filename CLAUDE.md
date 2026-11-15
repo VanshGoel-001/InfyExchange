@@ -114,7 +114,7 @@ Where to look for what: endpoints & rules â†’ `wiki/API-Reference.md`; tables â†
 
 ## Ask first (outward-facing or hard to reverse)
 
-- **Pushing is deploying.** A push to `deploy/neon-cloudrun-cloudflare-pages` runs CI and then (after `neon-staging` approval) updates the live Cloud Run service and Pages site. Never push, open PRs, force-push, rebase shared branches, or trigger workflows without being asked. Commit only when asked.
+- **Pushing is deploying.** A push to `deploy/neon-cloudrun-cloudflare-pages` updates the live Cloud Run service (a Cloud Build trigger) and the Pages site (Cloudflare's Git integration) with no approval step; CI runs alongside but no longer gates or performs the deploy. Never push, open PRs, force-push, rebase shared branches, or trigger workflows without being asked. Commit only when asked.
 - Anything touching production data or infrastructure: Neon, Secret Manager, Cloud Run settings, Cloudflare, GitHub environments/secrets, Cloudinary assets. Prefer giving the user the exact command to run.
 - Deleting files, dropping/renaming columns, rewriting history, dependency major-version bumps.
 - Don't run ZAP or load tests against production. Use synthetic data only.

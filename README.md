@@ -61,7 +61,7 @@ Set `VITE_API_BASE_URL` in the Cloudflare Pages project settings to the API orig
 
 ## Deploy
 
-The `deploy/neon-cloudrun-cloudflare-pages` branch runs CI before sequential Cloud Run and Cloudflare Pages deployments. The release image is scanned and deployed by digest. Configure Workload Identity Federation and the `neon-staging` GitHub environment; grant the deploy account least-privilege Artifact Registry and Cloud Run permissions, and grant the runtime account access to the six secrets listed above.
+A push to the `deploy/neon-cloudrun-cloudflare-pages` branch deploys Cloud Run (a Cloud Build trigger) and Cloudflare Pages (Git integration); CI runs separately and does not deploy. `cloud-run-deploy.yml` and `pages-deploy.yml` are kept but nothing calls them. Grant the runtime account access to the six secrets listed above.
 
 The full list of GitHub variables and secrets (Google Cloud, Cloudflare, `VITE_API_BASE_URL`, `CORS_ORIGINS`) and the Secret Manager mapping is in the [wiki Configuration Reference](wiki/Configuration-Reference.md#github-actions-variables-and-secrets).
 
