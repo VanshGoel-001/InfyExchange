@@ -49,12 +49,11 @@ All third-party actions are pinned to full commit SHAs (the version is kept in a
 
 Runs in the `neon-staging` GitHub environment with `id-token: write`; a concurrency group (`cloud-run-neon-staging`, no cancellation) serialises deploys.
 
-1. **Validate** that all required repository variables are set.
-2. **Authenticate** to Google Cloud with Workload Identity Federation (`google-github-actions/auth`), then `setup-gcloud` and `gcloud auth configure-docker <region>-docker.pkg.dev`.
-3. **Build and push** with `docker buildx build --platform linux/amd64 --provenance=mode=max --sbom=true`, tagged `<region>-docker.pkg.dev/<project>/<repo>/infyexchange-api:<git sha>`. The digest is read from BuildKit's metadata file and validated as `sha256:<64 hex>`; all later steps use `…/infyexchange-api@<digest>`.
-4. **Pull** the exact digest, generate a **CycloneDX SBOM** with Trivy and upload it as an artifact retained 90 days.
-5. **Block** on fixable HIGH/CRITICAL vulnerabilities (OS and library) in that image.
-6. **Deploy** the same digest:
+1. **Authenticate** to Google Cloud with Workload Identity Federation (`google-github-actions/auth`), then `setup-gcloud` and `gcloud auth configure-docker <region>-docker.pkg.dev`.
+2. **Build and push** with `docker buildx build --platform linux/amd64 --provenance=mode=max --sbom=true`, tagged `<region>-docker.pkg.dev/<project>/<repo>/infyexchange-api:<git sha>`. The digest is read from BuildKit's metadata file and validated as `sha256:<64 hex>`; all later steps use `…/infyexchange-api@<digest>`.
+3. **Pull** the exact digest, generate a **CycloneDX SBOM** with Trivy and upload it as an artifact retained 90 days.
+4. **Block** on fixable HIGH/CRITICAL vulnerabilities (OS and library) in that image.
+5. **Deploy** the same digest:
 
    ```text
    gcloud run deploy $CLOUD_RUN_SERVICE --image $IMAGE --project $GCP_PROJECT_ID --region $GCP_REGION
@@ -62,16 +61,15 @@ Runs in the `neon-staging` GitHub environment with `id-token: write`; a concurre
 
    The deploy changes **only the container image**. Every other setting of the service (environment variables, secrets, memory, CPU, concurrency, scaling, service account, public access) is managed by hand on Cloud Run and is left exactly as it is, so a push can never reset or remove something you set there. To change one, edit the service in the Cloud Run console.
 
-7. **Health check:** read the service URL and `curl --fail --retry 5 --retry-delay 5 <url>/health`.
+6. **Health check:** read the service URL and `curl --fail --retry 5 --retry-delay 5 <url>/health`.
 
 The container applies pending migrations at startup under an advisory lock (see [Data Model](Data-Model.md#migrations)); with `ENVIRONMENT=production` a failed migration stops the instance from starting, so Cloud Run will not route traffic to a bad revision.
 
 ## SPA deployment (`pages-deploy.yml`)
 
 1. Checkout the exact commit, Node 22, `npm ci`.
-2. Validate `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_PAGES_PROJECT`.
-3. Build with `VITE_API_BASE_URL` – the workflow rejects anything not matching `^https://[^/]+/api$`.
-4. `wrangler pages deploy dist --project-name=<project> --branch=deploy/neon-cloudrun-cloudflare-pages`.
+2. Build with `VITE_API_BASE_URL` and `VITE_GOOGLE_CLIENT_ID` (repository variables, baked into the bundle). The build itself rejects a `VITE_API_BASE_URL` that does not end in `/api`.
+3. `wrangler pages deploy dist --project-name=<project> --branch=deploy/neon-cloudrun-cloudflare-pages`.
 
 > The `--branch` value controls which Pages deployment environment is used. If the Pages project's *production branch* is not set to this branch, Cloudflare treats the upload as a **preview** deployment (inference from how Pages works – verify in your Pages project settings).
 

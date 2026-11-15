@@ -105,7 +105,7 @@ Admin deletions do not remove Cloudinary assets ([Known Limitations](Known-Limit
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Deploy fails at "Validate deployment settings" | A GitHub variable is empty | Add it (names in the error) |
+| Deploy fails at "Authenticate" or "Build and push" | A GitHub variable is empty or wrong (nothing checks them up front) | Check the repository variables used by `cloud-run-deploy.yml` |
 | Deploy fails at Trivy | Fixable HIGH/CRITICAL vuln in the base image or a dependency | Bump the dependency/base image (Dependabot may already have a PR); rebuild |
 | Pages build fails with `VITE_API_BASE_URL must end with "/api"` | Variable missing `/api` or has a trailing slash | Set `https://<api-host>/api` |
 | SPA loads but every API call fails with CORS | `CORS_ORIGINS` isn't the exact Pages origin (scheme + host, no trailing slash/path) | Fix `CORS_ORIGINS` on the Cloud Run service (saving it starts a new revision) |

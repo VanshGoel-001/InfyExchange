@@ -26,29 +26,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Validate Cloudflare Pages settings
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
-        run: |
-          for variable in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_PAGES_PROJECT; do
-            if [[ -z "${!variable}" ]]; then
-              echo "Missing required GitHub secret/variable: $variable" >&2
-              exit 1
-            fi
-          done
       - name: Build production SPA
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-          # Optional and public (an OAuth client ID is not a secret). Empty hides the Google button.
           VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
-        run: |
-          if [[ ! "$VITE_API_BASE_URL" =~ ^https://[^/]+/api$ ]]; then
-            echo "Set the repository variable VITE_API_BASE_URL to https://<api-host>/api" >&2
-            exit 1
-          fi
-          npm run build
+        run: npm run build
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
