@@ -16,6 +16,7 @@ from app.models.interest import Interest
 from app.models.listing import Listing
 from app.models.need import Need
 from app.models.pickup_area import PickupArea
+from app.models.removal import Removal
 from app.models.report import Report
 from app.models.user import User
 from app.schemas.pickup_area import (
@@ -23,9 +24,13 @@ from app.schemas.pickup_area import (
     PickupAreaCreate,
     PickupAreaUpdate,
 )
+from app.schemas.removal import AdminRemoval
 from app.services import email_service
+from app.services.cloudinary import delete_image
+from app.services.notify import notify, short
 from app.services.rate_limit import admin_limiter, rate_limit_dependency
-from app.utils.enums import InterestStatus, ListingStatus, NeedStatus
+from app.services.removals import open_enquirer_ids, record_listing_removal, record_need_removal
+from app.utils.enums import InterestStatus, ListingStatus, NeedStatus, RemovalReason
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +303,7 @@ def change_listing_status(
 @router.delete("/listings/{listing_id}")
 def admin_delete_listing(
     listing_id: int,
+    data: AdminRemoval,
     request: Request,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -307,6 +313,36 @@ def admin_delete_listing(
         raise HTTPException(status_code=404, detail="Listing not found")
 
     title = listing.title
+    owner_id = listing.owner_id
+
+    record_listing_removal(db, listing, RemovalReason.ADMIN_REMOVED, current_admin.id, data.reason)
+
+    if owner_id != current_admin.id:
+        notify(
+            db,
+            owner_id,
+            "listing_removed_by_admin",
+            f"Your listing \"{short(title)}\" was removed by an admin.",
+            listing_title=title,
+            detail=data.reason,
+        )
+
+    # Their enquiry is deleted with the listing, so there is no interest_id to point at.
+    for user_id in open_enquirer_ids(db, listing.id):
+        notify(
+            db,
+            user_id,
+            "enquiry_closed",
+            f"\"{short(title)}\" is no longer available.",
+            listing_title=title,
+        )
+
+    for image in listing.images:
+        try:
+            delete_image(image.cloudinary_public_id)
+        except Exception:
+            logger.exception("Could not delete image %s", image.cloudinary_public_id)
+
     db.delete(listing)
 
     log_admin_action(
@@ -316,7 +352,7 @@ def admin_delete_listing(
         target_type="LISTING",
         target_id=str(listing_id),
         ip_address=request.client.host if request.client else None,
-        details={"title": title},
+        details={"title": title, "reason": data.reason},
     )
     db.commit()
 
@@ -369,6 +405,7 @@ def get_all_needs(
 @router.delete("/needs/{need_id}")
 def admin_delete_need(
     need_id: int,
+    data: AdminRemoval,
     request: Request,
     current_admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
@@ -378,6 +415,20 @@ def admin_delete_need(
         raise HTTPException(status_code=404, detail="Need not found")
 
     title = need.title
+    owner_id = need.user_id
+
+    record_need_removal(db, need, RemovalReason.ADMIN_REMOVED, current_admin.id, data.reason)
+
+    if owner_id != current_admin.id:
+        notify(
+            db,
+            owner_id,
+            "need_removed_by_admin",
+            f"Your need \"{short(title)}\" was removed by an admin.",
+            listing_title=title,
+            detail=data.reason,
+        )
+
     db.delete(need)
 
     log_admin_action(
@@ -387,11 +438,71 @@ def admin_delete_need(
         target_type="NEED",
         target_id=str(need_id),
         ip_address=request.client.host if request.client else None,
-        details={"title": title},
+        details={"title": title, "reason": data.reason},
     )
     db.commit()
 
     return {"message": "Need removed by admin", "need_id": need_id}
+
+
+@router.get("/removals")
+def get_removals(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    kind: Literal["LISTING", "NEED"] | None = None,
+    reason: RemovalReason | None = None,
+    search: str | None = Query(None, max_length=100),
+    db: Session = Depends(get_db),
+):
+    """Listings and needs that are gone, newest first: what, whose, who removed it, when and why.
+
+    Read-only, so nothing to audit. The record is kept for `removal_retention_days`.
+    """
+
+    owner = aliased(User)
+    remover = aliased(User)
+
+    stmt = (
+        select(Removal, owner.name, remover.name)
+        .outerjoin(owner, owner.id == Removal.owner_id)
+        .outerjoin(remover, remover.id == Removal.removed_by_id)
+    )
+
+    if kind:
+        stmt = stmt.where(Removal.kind == kind)
+    if reason:
+        stmt = stmt.where(Removal.reason == reason.value)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        stmt = stmt.where(Removal.title.ilike(term) | owner.name.ilike(term))
+
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = db.execute(
+        stmt.order_by(desc(Removal.created_at), desc(Removal.id)).offset(skip).limit(limit)
+    ).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": removal.id,
+                "kind": removal.kind,
+                "item_id": removal.item_id,
+                "title": removal.title,
+                "category": removal.category,
+                "item_type": removal.item_type,
+                "amount": removal.amount,
+                "owner_id": removal.owner_id,
+                "owner_name": owner_name,
+                "removed_by_id": removal.removed_by_id,
+                "removed_by_name": remover_name,
+                "reason": removal.reason,
+                "note": removal.note,
+                "created_at": removal.created_at,
+            }
+            for removal, owner_name, remover_name in rows
+        ],
+    }
 
 
 @router.get("/audit-logs")

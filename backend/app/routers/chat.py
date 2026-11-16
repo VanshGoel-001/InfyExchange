@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, joinedload
 
@@ -19,6 +19,7 @@ from app.schemas.chat import (
     ReportCreate,
 )
 from app.utils.names import plain_preview
+from app.services import idempotency
 from app.services.notify import (
     is_blocked_between,
     notify,
@@ -194,9 +195,20 @@ def get_chat(
 def send_message(
     interest_id: int,
     data: MessageCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+
+    idem = idempotency.begin(db, request, current_user, f"message.send:{interest_id}")
+
+    if idem.replay_id is not None:
+        replayed = db.get(Message, idem.replay_id)
+
+        if replayed is None:
+            raise idempotency.already_done()
+
+        return replayed
 
     chat_limiter.enforce(
         user_key(current_user.id, "chat-send"),
@@ -257,6 +269,8 @@ def send_message(
             detail=plain_preview(data.body, 80),
         )
 
+    db.flush()
+    idem.finish(message.id)
     db.commit()
     db.refresh(message)
 

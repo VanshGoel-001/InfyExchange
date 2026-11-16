@@ -51,6 +51,16 @@ class InterestStatus(str, Enum):
     CLOSED = "CLOSED"
 
 
+class RemovalReason(str, Enum):
+    # Why a listing or need is gone. The owner picks one of the OWNER_* values; the others are set by the system.
+    OWNER_SOLD = "OWNER_SOLD"
+    OWNER_UNAVAILABLE = "OWNER_UNAVAILABLE"
+    OWNER_MISTAKE = "OWNER_MISTAKE"
+    OWNER_DELETED = "OWNER_DELETED"
+    ADMIN_REMOVED = "ADMIN_REMOVED"
+    EXPIRED = "EXPIRED"
+
+
 class NeedType(str, Enum):
     BUY = "BUY"
     RENT = "RENT"

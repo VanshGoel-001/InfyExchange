@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -33,11 +34,14 @@ from app.schemas.listing import (
     ListingResponse,
     ListingUpdate,
 )
+from app.schemas.removal import OwnerRemoval
+from app.services import idempotency
 from app.services.cloudinary import (
     delete_image,
     upload_image,
 )
 from app.services.notify import notify, short
+from app.services.removals import record_listing_removal
 from app.utils.money import format_rupees
 from app.services.rate_limit import (
     action_limiter,
@@ -52,6 +56,7 @@ from app.utils.enums import (
     ListingCategory,
     ListingStatus,
     ListingType,
+    RemovalReason,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,6 +150,14 @@ async def create_listing(
     current_user: User = Depends(get_complete_user),
     db: Session = Depends(get_db),
 ):
+
+    idem = idempotency.begin(db, request, current_user, "listing.create")
+
+    if idem.replay_id is not None:
+        if db.get(Listing, idem.replay_id) is None:
+            raise idempotency.already_done()
+
+        return get_listing_detail(idem.replay_id, db)
 
     create_limiter.enforce(
         client_key(request, "create-listing"),
@@ -280,6 +293,9 @@ async def create_listing(
             db.add(listing_image)
             uploaded_images.append(result["public_id"])
 
+        # The key is claimed by the first commit and only gets its result here, so a retry that arrives
+        # while the photos are still uploading is told to wait instead of being shown a listing without them.
+        idem.finish(listing.id)
         db.commit()
 
     except Exception as exc:
@@ -297,6 +313,8 @@ async def create_listing(
                 # Keep going so the half-created listing is still removed below.
                 logger.exception("Could not delete uploaded image %s", public_id)
 
+        # The listing is undone, so the key must be too, or a retry would be answered with a listing that is gone.
+        idem.release()
         db.delete(listing)
         db.commit()
 
@@ -634,6 +652,7 @@ def mark_returned(
 )
 def delete_listing(
     listing_id: int,
+    data: OwnerRemoval | None = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -681,9 +700,20 @@ def delete_listing(
         )
 
     for image in listing.images:
-        delete_image(
-            image.cloudinary_public_id
-        )
+        try:
+            delete_image(
+                image.cloudinary_public_id
+            )
+        except Exception:
+            # A Cloudinary outage must not keep the listing alive; the orphaned image is logged for clean-up.
+            logger.exception("Could not delete image %s", image.cloudinary_public_id)
+
+    record_listing_removal(
+        db,
+        listing,
+        RemovalReason(data.reason) if data else RemovalReason.OWNER_DELETED,
+        removed_by_id=current_user.id,
+    )
 
     db.delete(listing)
     db.commit()

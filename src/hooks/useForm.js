@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { toFailure } from '../services/api';
+import { newKey } from '../utils/idempotency';
 import { failureCopy } from '../utils/messages';
 import { splitServerError } from '../utils/validate';
 
@@ -23,10 +24,14 @@ export function useForm(initial, validate, fieldNames = Object.keys(initial), { 
   // Set when the request itself failed (not a problem with what was typed): { text, action } for one inline line.
   const [failure, setFailure] = useState(null);
   const lastSubmit = useRef(null);
+  // Sent with a write so a retry after a lost answer cannot create it twice. It stays the same across retries of
+  // the same form, and a new one starts after a success or as soon as anything in the form changes.
+  const keyRef = useRef(null);
 
   const problems = validate(values);
 
   const set = (key, value) => {
+    keyRef.current = null;
     setValues((current) => ({ ...current, [key]: value }));
     setRemote((current) => {
       if (!(key in current)) return current;
@@ -65,6 +70,7 @@ export function useForm(initial, validate, fieldNames = Object.keys(initial), { 
     setBusy(true);
     try {
       await onValid(values);
+      keyRef.current = null;
     } catch (err) {
       if (err?.name === 'AbortError') return;
       const problem = toFailure(err);
@@ -91,5 +97,10 @@ export function useForm(initial, validate, fieldNames = Object.keys(initial), { 
   // Try the same submit again with what is on screen (the Retry next to the error).
   const resubmit = () => (lastSubmit.current ? execute(lastSubmit.current) : undefined);
 
-  return { values, set, bind, error, handleSubmit, resubmit, busy, formError, failure, setFormError };
+  const idempotencyKey = () => {
+    keyRef.current ??= newKey();
+    return keyRef.current;
+  };
+
+  return { values, set, bind, error, handleSubmit, resubmit, idempotencyKey, busy, formError, failure, setFormError };
 }

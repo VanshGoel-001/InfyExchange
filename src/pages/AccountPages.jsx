@@ -15,6 +15,7 @@ import {
   DECLINE_REPLIES,
   INTEREST_STATUSES,
   LISTING_STATUSES,
+  OWNER_REMOVAL_REASONS,
   ROLES,
   daysLeft,
   formatDate,
@@ -234,6 +235,7 @@ export function MyListingsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState(null);
+  const [removing, setRemoving] = useState(null);
   const [busy, setBusy] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -255,13 +257,13 @@ export function MyListingsPage() {
     if (token) load();
   }, [token]);
 
-  const remove = async (item) => {
-    if (!window.confirm(`Delete “${item.title}”? Everyone with an open enquiry will be told it was removed and their chat ends. This cannot be undone.`)) return;
+  const remove = async (item, reason) => {
     setBusy(item.id);
     setError('');
     setNotice('');
     try {
-      await api.deleteListing(item.id, token);
+      await api.deleteListing(item.id, token, reason);
+      setRemoving(null);
       load();
     } catch (e) {
       setError(failureCopy(toFailure(e), 'generic').text);
@@ -324,6 +326,9 @@ export function MyListingsPage() {
                   }}
                 />
               )}
+              {removing === item.id && (
+                <RemovePanel item={item} busy={busy === item.id} onConfirm={(reason) => remove(item, reason)} onCancel={() => setRemoving(null)} />
+              )}
               <div className="my-item-actions">
                 <Link className="outline" to={`/listings/${item.id}`}>View</Link>
                 {item.status === 'ACTIVE' && ['SELL', 'RENT'].includes(item.listing_type) && editing !== item.id && (
@@ -332,8 +337,8 @@ export function MyListingsPage() {
                 {item.status === 'RENTED' && (
                   <button className="outline" disabled={busy === item.id} onClick={() => markReturned(item)}>Mark returned</button>
                 )}
-                <button className="danger" disabled={busy === item.id} onClick={() => remove(item)}>
-                  {busy === item.id ? 'Deleting…' : 'Delete'}
+                <button className="danger" disabled={busy === item.id || removing === item.id} onClick={() => { setNotice(''); setEditing(null); setRemoving(item.id); }}>
+                  Delete
                 </button>
               </div>
             </article>
@@ -349,6 +354,32 @@ export function MyListingsPage() {
         </section>
       )}
     </AppShell>
+  );
+}
+
+/** Deleting asks why first, so the reason is kept (and shows up in the admin's Removed tab). One tap, then confirm. */
+function RemovePanel({ item, busy, onConfirm, onCancel }) {
+  const [reason, setReason] = useState('');
+
+  return (
+    <div className="remove-panel" role="group" aria-label={`Delete ${item.title}`}>
+      <b>Why are you deleting it?</b>
+      <div className="remove-reasons">
+        {OWNER_REMOVAL_REASONS.map((option) => (
+          <label key={option.value}>
+            <input type="radio" name={`remove-${item.id}`} checked={reason === option.value} onChange={() => setReason(option.value)} disabled={busy} />
+            {option.choice}
+          </label>
+        ))}
+      </div>
+      <small>Everyone with an open enquiry will be told it was removed and their chat ends. This cannot be undone.</small>
+      <div className="button-row">
+        <button type="button" className="danger compact" disabled={!reason || busy} onClick={() => onConfirm(reason)}>
+          {busy ? 'Deleting…' : 'Delete listing'}
+        </button>
+        <button type="button" className="outline compact" onClick={onCancel} disabled={busy}>Cancel</button>
+      </div>
+    </div>
   );
 }
 

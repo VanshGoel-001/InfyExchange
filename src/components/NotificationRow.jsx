@@ -17,7 +17,7 @@ export default function NotificationRow({ item, view, onOpen, onDelete }) {
           <span className="bell-title">
             {view.title.map((piece, i) => (piece.name ? <b key={i}>{piece.text}</b> : <span key={i}>{piece.text}</span>))}
           </span>
-          {view.secondary && <span className="bell-sub">{view.secondary}</span>}
+          {view.secondary && <span className={`bell-sub${view.wrap ? ' wrap' : ''}`}>{view.secondary}</span>}
         </span>
         <span className="bell-meta">
           <time dateTime={item.created_at} title={formatDateTime(item.created_at)}>

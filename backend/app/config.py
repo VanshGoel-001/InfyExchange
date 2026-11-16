@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # Notifications disappear this many days after they are created.
     notification_expiry_days: int = 30
 
+    # How long the record of a removed listing or need is kept, and how long a retried write is remembered.
+    removal_retention_days: int = 90
+    idempotency_key_hours: int = 24
+
     # PostgreSQL Connection Pooling Config
     db_pool_size: int = 10
     db_max_overflow: int = 20

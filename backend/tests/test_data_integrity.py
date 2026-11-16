@@ -29,6 +29,7 @@ from tests.support import (
     add_interest,
     add_listing,
     add_need,
+    admin_delete,
     install_fake_cloudinary,
     listing_form,
 )
@@ -204,7 +205,7 @@ class TestCascadeDeletes:
         """TC-DI-CAS-005 | AC-13.1, AC-19.3 | T12 | business | removing a listing through the admin API keeps the audit entry that records it"""
         admin = make_user(db_session, is_admin=True)
         listing = add_listing(db_session, make_user(db_session), title="Audited")
-        client.delete(f"/api/admin/listings/{listing.id}", headers=auth_headers(admin))
+        admin_delete(client, f"/api/admin/listings/{listing.id}", auth_headers(admin))
         db_session.expire_all()
         assert _count(db_session, Listing) == 0
         entry = db_session.scalar(select(AuditLog))

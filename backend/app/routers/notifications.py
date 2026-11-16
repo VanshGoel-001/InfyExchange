@@ -26,7 +26,8 @@ _BY_BUYER = {"enquiry_received", "received_answer", "completion_reminder"}
 _BY_OWNER = {"enquiry_accepted", "enquiry_declined", "deal_closed", "price_changed", "item_returned"}
 
 # Only these are system notices with nobody behind them. Every other kind needs a named sender.
-_NO_SENDER = {"enquiry_expired", "enquiry_closed"}
+# An admin's removal names no admin: members are told "an admin", and who it was stays in the Admin log.
+_NO_SENDER = {"enquiry_expired", "enquiry_closed", "listing_removed_by_admin", "need_removed_by_admin"}
 
 # Most that is ever read for one person: 30 days of notifications is far fewer than this.
 _SCAN_LIMIT = 500

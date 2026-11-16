@@ -116,6 +116,14 @@ def fresh_database():
     yield
 
 
+@pytest.fixture(autouse=True)
+def no_cloudinary_on_admin_delete(monkeypatch):
+    """Admin deletes remove the listing's images; tests must never reach the real Cloudinary."""
+    deleted: list[str] = []
+    monkeypatch.setattr("app.routers.admin.delete_image", deleted.append)
+    return deleted
+
+
 @pytest.fixture()
 def db_session():
     session = database.SessionLocal()

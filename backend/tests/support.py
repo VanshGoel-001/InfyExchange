@@ -37,6 +37,11 @@ WEBP_BYTES = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 16
 _counter = itertools.count(1)
 
 
+def admin_delete(client, url: str, headers: dict, reason: str = "Breaks the rules"):
+    """An admin removal now has to carry a reason (httpx's delete() cannot send a body)."""
+    return client.request("DELETE", url, headers=headers, json={"reason": reason})
+
+
 def image_part(name: str = "photo.png", content: bytes = PNG_BYTES, content_type: str = "image/png"):
     """One ``images`` multipart part for ``client.post(..., files=[...])``."""
     return ("images", (name, content, content_type))

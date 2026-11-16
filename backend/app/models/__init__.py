@@ -10,6 +10,8 @@ from app.models.notification import Notification
 from app.models.report import Report
 from app.models.user_block import UserBlock
 from app.models.audit_log import AuditLog
+from app.models.idempotency_key import IdempotencyKey
+from app.models.removal import Removal
 
 __all__ = [
     "User",
@@ -24,4 +26,6 @@ __all__ = [
     "Report",
     "UserBlock",
     "AuditLog",
+    "IdempotencyKey",
+    "Removal",
 ]

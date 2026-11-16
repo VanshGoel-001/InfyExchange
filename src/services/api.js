@@ -194,6 +194,8 @@ async function requestAll(path, token) {
   return items;
 }
 
+const withKey = (key) => (key ? { 'Idempotency-Key': key } : undefined);
+
 export const api = {
   // Auth
   register: (data) => request('/auth/register', { method: 'POST', body: data }),
@@ -209,20 +211,22 @@ export const api = {
   listings: (query) => request(`/listings${query ? `?${new URLSearchParams(query)}` : ''}`),
   pickupAreas: () => request('/pickup-areas'),
   listing: (id) => request(`/listings/${id}`),
-  createListing: (body, token, signal) => request('/listings', { method: 'POST', body, token, signal }),
+  // `key` is an Idempotency-Key: the same key sent again returns the first result instead of creating a second.
+  createListing: (body, token, signal, key) => request('/listings', { method: 'POST', body, token, signal, headers: withKey(key) }),
   myListings: (token) => requestAll('/listings/me', token),
-  deleteListing: (id, token) => request(`/listings/${id}`, { method: 'DELETE', token }),
+  // `reason` is one of the owner reasons in labels.js (REMOVAL_REASONS).
+  deleteListing: (id, token, reason) => request(`/listings/${id}`, { method: 'DELETE', body: reason ? { reason } : undefined, token }),
   // The price is the only thing an owner can change after posting.
   updatePrice: (id, price, token) => request(`/listings/${id}`, { method: 'PUT', body: { price }, token }),
   markReturned: (id, token) => request(`/listings/${id}/mark-returned`, { method: 'POST', token }),
 
   // Needs
   needs: (query) => request(`/needs${query ? `?${new URLSearchParams(query)}` : ''}`),
-  createNeed: (body, token, signal) => request('/needs', { method: 'POST', body, token, signal }),
+  createNeed: (body, token, signal, key) => request('/needs', { method: 'POST', body, token, signal, headers: withKey(key) }),
   myNeeds: (token) => requestAll('/needs/me', token),
 
   // Interests & Interactions
-  createInterest: (id, body, token) => request(`/interests/listing/${id}`, { method: 'POST', body, token }),
+  createInterest: (id, body, token, key) => request(`/interests/listing/${id}`, { method: 'POST', body, token, headers: withKey(key) }),
   sent: (token) => requestAll('/interests/sent', token),
   received: (token) => requestAll('/interests/received', token),
   accept: (id, token) => request(`/interests/${id}/accept`, { method: 'PATCH', token }),
@@ -234,7 +238,7 @@ export const api = {
 
   // Chat on an accepted enquiry
   chat: (id, afterId, token) => request(`/interests/${id}/chat?after_id=${afterId}`, { token }),
-  sendMessage: (id, body, token) => request(`/interests/${id}/messages`, { method: 'POST', body: { body }, token }),
+  sendMessage: (id, body, token, key) => request(`/interests/${id}/messages`, { method: 'POST', body: { body }, token, headers: withKey(key) }),
   reportUser: (id, reason, token) => request(`/interests/${id}/report`, { method: 'POST', body: { reason }, token }),
   blockUser: (id, token) => request(`/interests/${id}/block`, { method: 'POST', token }),
   unblockUser: (id, token) => request(`/interests/${id}/block`, { method: 'DELETE', token }),
@@ -253,9 +257,11 @@ export const api = {
   adminUpdateUser: (id, body, token) => request(`/admin/users/${id}`, { method: 'PATCH', body, token }),
   adminListings: (query, token) => request(`/admin/listings${query ? `?${new URLSearchParams(query)}` : ''}`, { token }),
   adminListingStatus: (id, status, token) => request(`/admin/listings/${id}/status?status=${status}`, { method: 'PATCH', token }),
-  adminDeleteListing: (id, token) => request(`/admin/listings/${id}`, { method: 'DELETE', token }),
+  // An admin removal always carries the reason the owner will be shown.
+  adminDeleteListing: (id, reason, token) => request(`/admin/listings/${id}`, { method: 'DELETE', body: { reason }, token }),
   adminNeeds: (query, token) => request(`/admin/needs${query ? `?${new URLSearchParams(query)}` : ''}`, { token }),
-  adminDeleteNeed: (id, token) => request(`/admin/needs/${id}`, { method: 'DELETE', token }),
+  adminDeleteNeed: (id, reason, token) => request(`/admin/needs/${id}`, { method: 'DELETE', body: { reason }, token }),
+  adminRemovals: (query, token) => request(`/admin/removals${query ? `?${new URLSearchParams(query)}` : ''}`, { token }),
   adminPickupAreas: (token) => request('/admin/pickup-areas', { token }),
   adminCreatePickupArea: (body, token) => request('/admin/pickup-areas', { method: 'POST', body, token }),
   adminUpdatePickupArea: (id, body, token) => request(`/admin/pickup-areas/${id}`, { method: 'PATCH', body, token }),

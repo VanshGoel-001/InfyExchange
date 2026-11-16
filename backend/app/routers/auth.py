@@ -202,6 +202,13 @@ def login(
             detail="Invalid email or password",
         )
 
+    # Only after the password matched, so this never tells a stranger that the account exists.
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated. Contact an administrator.",
+        )
+
     token = create_access_token(user.id)
 
     # "bearer" is the OAuth token type literal, not a secret (B105 is a known

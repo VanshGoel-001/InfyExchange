@@ -10,21 +10,17 @@ Findings from reading the code and docs for this wiki. Each item is marked **Ver
 | No email verification | Verified |
 | Needs have no response workflow | Need cards are display-only (the non-functional "I can help" button was removed). The API has no endpoint for responding to a need, and contact details are only ever revealed for accepted listing enquiries. The UI points helpers to "post it as an item" |
 | Needs cannot be edited or deleted from the UI | The API has `DELETE /needs/{id}`, but `api.js` has no wrapper and **My requests** is read-only. `FULFILLED`/`CLOSED` statuses are unreachable |
-| Listing detail shows only the first image | Extra images are uploaded and stored but not displayed (`DetailPage`) |
 | No way to renew a listing | Expires after 30 days; must be reposted |
 | Owners can edit only the price | By design: everything else is locked once posted. To change anything else, delete and repost |
 | Email is limited to a welcome message and an admin alert | By design. Sellers and buyers are told of enquiries, replies and messages through the bell only, so someone who never opens the site learns nothing. Google sign-up gets no welcome email |
 | Chat is polled, not pushed | The open chat asks every 4 s (the bell every 30 s). Fine at this scale; many simultaneous chats would need WebSockets and shared state. No attachments, and messages cannot be edited or deleted |
-| Removal notices are owner-only | An admin deleting an item, the expiry cleanup and deactivating a member remove enquiries without telling the people in them |
+| Some removals are silent for enquirers | An admin deleting a listing now tells the owner (with the reason) and everyone with an open enquiry. The expiry cleanup and deactivating a member still remove enquiries without telling the people in them |
 | Gmail-only registration by default | Configurable via `ALLOWED_EMAIL_DOMAINS` |
 
 ## Correctness and robustness issues (Verified in code)
 
 | # | Issue | Where | Impact |
 | --- | --- | --- | --- |
-| 1 | **Admin delete of a listing does not delete its Cloudinary images** | `routers/admin.py` `admin_delete_listing` | Orphaned assets keep consuming storage; owner delete and expiry cleanup *do* delete them |
-| 2 | **Owner delete is not resilient to Cloudinary errors** | `routers/listings.py` `delete_listing` calls `delete_image` without a `try` | A Cloudinary failure returns `500` and the listing stays; cleanup, by contrast, logs and continues |
-| 3 | **Login succeeds for deactivated users** | `routers/auth.py` | A token is issued, then every protected call fails with `403`; the SPA would show a logged-in shell that errors. Checking `is_active` at login would give a clearer message |
 | 5 | **Non-active listings are publicly readable by ID** | `get_listing_detail` only hides *expired ACTIVE* rows | `SOLD`/`RENTED`/`UNAVAILABLE` (including admin-unlisted) listings remain visible to anyone who knows the ID |
 | 7 | **Duplicate-guard returns `201` with the existing record** | `create_listing`, `create_need` | Harmless but surprising; clients cannot tell a replay from a new record |
 | 8 | **Registration reveals whether an email/phone exists** (`409` messages) | `routers/auth.py` | Account enumeration; mitigated only by the 5/min/IP limit |
@@ -48,7 +44,7 @@ Findings from reading the code and docs for this wiki. Each item is marked **Ver
 | **Startup migrations and background jobs run in every environment** | `main.py` lifespan | `ENVIRONMENT=production` only makes a *failed* migration fatal. A developer machine whose `backend/.env` holds the production URLs applies migrations and runs the cleanup and maintenance jobs against production on every start, and `uvicorn --reload` repeats that on each saved `.py` file. Keep production URLs out of `.env`; consider an opt-in setting for migrations and jobs outside production |
 | Three migration tests open a real connection | `tests/conftest.py` does not override `DATABASE_URL_UNPOOLED` | `TC-SVC-MIG-004` to `006` call `apply_migrations()` with `upgrade` patched but still open an engine and take an advisory lock on whatever `.env` names. Run pytest with `DATABASE_URL_UNPOOLED=""` until this is fixed |
 | Email addresses are not verified | Anyone can register an address they do not own, which triggers a welcome email to it (limited by the 5/min/IP register limit). Failed emails keep the recipient and body for up to 30 days |
-| Audit coverage | Only admin actions are audited (now including retrying or discarding a failed email). Owner deletions, deal closures, interest decisions, reports, blocks and contact reveals are not recorded in `audit_logs` (some appear in logs) |
+| Audit coverage | Only admin actions are audited (now including retrying or discarding a failed email). Removed listings and needs are recorded separately in `removals` (who, when, why; kept 90 days). Deal closures, interest decisions, reports, blocks and contact reveals are not recorded in `audit_logs` (some appear in logs) |
 | Pages deployment branch | The Pages workflow always deploys with `--branch=deploy/neon-cloudrun-cloudflare-pages`; depending on the Pages project's production-branch setting this may be a *preview* deployment (*Inference / verify*) |
 | Sync SQLAlchemy in threadpool | Fine at this scale; heavy traffic would need tuning of pools and thread limits |
 
@@ -62,9 +58,7 @@ Findings from reading the code and docs for this wiki. Each item is marked **Ver
 
 ## Suggested priorities
 
-1. Delete Cloudinary images on admin listing deletion; wrap owner-delete image removal in error handling.
 2. Verify and, if confirmed, fix client-IP derivation behind Cloud Run.
-3. Reject or message deactivated users at login.
 4. Add length/consistency validation to `ListingUpdate`; wire edit/status-change UI or remove the endpoint.
 5. Add pagination (or a higher default limit) to "mine" lists.
 6. Run cleanup as a scheduled job.

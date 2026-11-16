@@ -88,6 +88,7 @@ Interactive docs: `/docs` (Swagger UI), `/redoc`, `/openapi.json` – **availabl
 | POST | `/api/admin/failed-emails/{id}/retry` | admin | `admin` | Send a failed email again |
 | DELETE | `/api/admin/failed-emails/{id}` | admin | `admin` | Discard a failed email |
 | GET | `/api/admin/audit-logs` | admin | `admin` | Read audit trail |
+| GET | `/api/admin/removals` | admin | `admin` | Removed listings and needs: what, whose, who, when, why |
 
 Rate-limit buckets are keyed by `<scope>:<client IP>`, except those marked *per user*, which are keyed by the signed-in account (many trainees share one campus address); see [Rate limits](#rate-limits) for numbers.
 
@@ -383,6 +384,14 @@ Emails the provider refused are stored (already rendered) until an admin decides
 - Unresolved rows are removed by the daily cleanup after 30 days (they hold an address and a message body).
 
 ### Audit log
+
+**Idempotency.** `POST /listings`, `POST /needs`, `POST /interests/listing/{id}` and `POST /interests/{id}/messages` accept an optional `Idempotency-Key` header (16-64 letters, digits, `-`, `_`; also allowed by CORS). The same key from the same member answers with the first result (same status and body, nothing created again) for 24 hours. A request that failed frees its key. A key reused for a different action is `422`; a key whose first request is still running is `409` ("still being processed"); a replay whose item has since been removed is `409`. Requests without the header behave as before.
+
+**Removal reasons.** `DELETE /listings/{id}` and `DELETE /needs/{id}` take an optional JSON body `{"reason": "OWNER_SOLD" | "OWNER_UNAVAILABLE" | "OWNER_MISTAKE" | "OWNER_DELETED"}` (none counts as `OWNER_DELETED`). `DELETE /admin/listings/{id}` and `DELETE /admin/needs/{id}` **require** `{"reason": "<3-200 characters>"}` (`422` otherwise); the owner gets a bell notice (`listing_removed_by_admin` / `need_removed_by_admin`, naming no admin), everyone with an open enquiry on a removed listing gets `enquiry_closed`, the listing's Cloudinary images are deleted (a Cloudinary failure is logged and does not block the removal), and the reason is added to the Admin log entry.
+
+`POST /auth/login` answers `403` "Account is deactivated" for a deactivated account, but only when the password is right; a wrong password is still the generic `401`.
+
+`GET /api/admin/removals?skip&limit(≤100)&kind=LISTING|NEED&reason=<code>&search=` → `{total, items[]}`, newest first. Each item: `id`, `kind`, `item_id`, `title`, `category`, `item_type`, `amount`, `owner_id`, `owner_name`, `removed_by_id`, `removed_by_name`, `reason`, `note`, `created_at`.
 
 `GET /api/admin/audit-logs?skip&limit(≤100)` → `{total, items[]}`, newest first. Each item: `id`, `actor_id`, `actor_name` (`"System"` when the actor was deleted), `action`, `target_type`, `target_id`, `ip_address`, `details` (JSON string), `created_at`.
 

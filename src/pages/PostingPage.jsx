@@ -126,7 +126,8 @@ export default function PostingPage({ need = false }) {
           description: v.description.trim(),
         },
         token,
-        signal
+        signal,
+        form.idempotencyKey()
       );
       navigate('/my-needs', { state: { notice: 'Your need is posted. Other trainees can now see it.' } });
       return;
@@ -144,7 +145,7 @@ export default function PostingPage({ need = false }) {
     data.append('description', v.description.trim());
     v.images.forEach((file) => data.append('images', file));
 
-    const created = await api.createListing(data, token, signal);
+    const created = await api.createListing(data, token, signal, form.idempotencyKey());
     navigate(`/listings/${created.id}`, { state: { notice: 'Your listing is live. Other trainees can now find it.' } });
   });
 

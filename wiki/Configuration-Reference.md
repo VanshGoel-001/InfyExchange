@@ -44,6 +44,8 @@ The process fails at import if any of these is missing.
 | --- | --- | --- |
 | `LISTING_EXPIRY_DAYS` | 30 | Used for both listings and needs |
 | `NOTIFICATION_EXPIRY_DAYS` | 30 | A notification stops showing this many days after it is created; the daily cleanup deletes it |
+| `REMOVAL_RETENTION_DAYS` | 90 | How long the record of a removed listing or need is kept before the daily cleanup deletes it |
+| `IDEMPOTENCY_KEY_HOURS` | 24 | How long a retried write is remembered |
 | `MAX_IMAGES_PER_LISTING` | 5 | Mirror in `PostingPage.jsx` |
 | `MAX_IMAGE_SIZE_MB` | 5 | Mirror in `PostingPage.jsx` |
 | `MIN_IMAGE_WIDTH` | 600 | Narrower photos are rejected; mirror in `validate.js` (`imageMinWidth`) |

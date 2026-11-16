@@ -4095,6 +4095,14 @@ input[name=password] {
   font-weight: 500
 }
 
+.bell-sub.wrap {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal
+}
+
 .bell-sub {
   display: block;
   min-width: 0;
@@ -4256,11 +4264,36 @@ input[name=password] {
   flex-wrap: wrap
 }
 
-.price-editor {
+.price-editor,
+.remove-panel {
   display: grid;
   gap: 8px;
   padding: 11px;
   border-top: 1px solid #edf0f4
+}
+
+.remove-panel small {
+  color: #667184
+}
+
+.remove-reasons {
+  display: grid;
+  gap: 6px
+}
+
+.remove-reasons label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  cursor: pointer
+}
+
+.remove-reasons input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none
 }
 
 /* Chat */

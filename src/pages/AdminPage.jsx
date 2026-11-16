@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Copy, Flag, Inbox, LayoutDashboard, Mail, MapPin, Megaphone, Package, ScrollText, Users } from 'lucide-react';
+import { Check, Copy, Flag, Inbox, LayoutDashboard, Mail, MapPin, Megaphone, Package, ScrollText, Trash2, Users } from 'lucide-react';
 import { AppShell } from '../components/Layout';
 import { Banner, Pill } from '../components/Ui';
 import { useAuth } from '../context/AuthContext';
@@ -13,6 +13,7 @@ import {
   LISTING_TYPES,
   NEED_STATUSES,
   NEED_TYPES,
+  REMOVAL_REASONS,
   ROLES,
   formatDateTime,
   formatPrice,
@@ -25,6 +26,7 @@ const TABS = [
   ['users', 'Members', Users],
   ['listings', 'Listings', Package],
   ['needs', 'Needs', Megaphone],
+  ['removals', 'Removed', Trash2],
   ['areas', 'Pickup areas', MapPin],
   ['reports', 'Reports', Flag],
   ['emails', 'Failed emails', Mail],
@@ -36,6 +38,7 @@ const FILTERS = {
   users: [['', 'All'], ['active', 'Active'], ['deactivated', 'Deactivated']],
   listings: [['', 'All'], ...LISTING_STATUSES.map((s) => [s.value, s.label])],
   needs: [['', 'All'], ...NEED_STATUSES.map((s) => [s.value, s.label])],
+  removals: [['', 'All'], ...REMOVAL_REASONS.map((r) => [r.value, r.label])],
 };
 
 const LOG_ACTIONS = {
@@ -69,6 +72,7 @@ function describeLog(log) {
   }
   const parts = [];
   if (details.title) parts.push(`“${details.title}”`);
+  if (details.reason) parts.push(`Reason: ${details.reason}`);
   if (details.email) parts.push(details.email);
   if (details.subject) parts.push(`“${details.subject}”`);
   if (details.result) parts.push(details.result === 'sent' ? 'Sent' : 'Failed again');
@@ -127,8 +131,8 @@ export default function AdminPage() {
   // The last failure (kind, message, ref) or null; never a raw message string.
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState('');
-  const [rows, setRows] = useState({ users: null, listings: null, needs: null, areas: null, reports: null, emails: null, audit: null });
-  const [filters, setFilters] = useState({ users: '', listings: '', needs: '' });
+  const [rows, setRows] = useState({ users: null, listings: null, needs: null, removals: null, areas: null, reports: null, emails: null, audit: null });
+  const [filters, setFilters] = useState({ users: '', listings: '', needs: '', removals: '' });
   const [newArea, setNewArea] = useState({ name: '', has_blocks: false });
   const [searchTerm, setSearchTerm] = useState('');
   const [busyId, setBusyId] = useState(null);
@@ -142,7 +146,7 @@ export default function AdminPage() {
   const loadTab = async (name = tab, term = searchTerm, filter = filters[name]) => {
     const query = {};
     if (term.trim()) query.search = term.trim();
-    if (filter) query[name === 'users' ? 'status' : 'status_filter'] = filter;
+    if (filter) query[{ users: 'status', removals: 'reason' }[name] ?? 'status_filter'] = filter;
     const params = Object.keys(query).length ? query : null;
     setError(null);
     if (name === 'overview') {
@@ -164,6 +168,7 @@ export default function AdminPage() {
         users: () => api.adminUsers(params, token),
         listings: () => api.adminListings(params, token),
         needs: () => api.adminNeeds(params, token),
+        removals: () => api.adminRemovals(params, token),
         areas: () => api.adminPickupAreas(token),
         reports: () => api.adminReports(token),
         emails: () => api.adminFailedEmails(token),
@@ -256,23 +261,42 @@ export default function AdminPage() {
       reload: 'listings',
     });
 
-  const removeListing = (item) =>
-    act({
+  // A removal has to say why: the owner is shown this text, and it is kept in the Admin log and the Removed tab.
+  const askReason = (what) => {
+    const answer = window.prompt(`Why are you deleting ${what} for good?
+
+The owner will be shown this reason. It is also recorded in the Admin log.`, '');
+    if (answer === null) return null;
+    const reason = answer.trim();
+    if (reason.length < 3 || reason.length > 200) {
+      setNotice('');
+      setError({ kind: 'invalid', message: 'Give a reason of 3 to 200 characters. Nothing was deleted.' });
+      return null;
+    }
+    return reason;
+  };
+
+  const removeListing = (item) => {
+    const reason = askReason(`“${item.title}”`);
+    if (!reason) return undefined;
+    return act({
       id: item.id,
-      confirm: `Delete “${item.title}” for good? This is recorded in the Admin log.`,
-      call: () => api.adminDeleteListing(item.id, token),
+      call: () => api.adminDeleteListing(item.id, reason, token),
       done: `“${item.title}” was deleted.`,
       reload: 'listings',
     });
+  };
 
-  const removeNeed = (need) =>
-    act({
+  const removeNeed = (need) => {
+    const reason = askReason(`the need “${need.title}”`);
+    if (!reason) return undefined;
+    return act({
       id: need.id,
-      confirm: `Delete the need “${need.title}” for good? This is recorded in the Admin log.`,
-      call: () => api.adminDeleteNeed(need.id, token),
+      call: () => api.adminDeleteNeed(need.id, reason, token),
       done: `“${need.title}” was deleted.`,
       reload: 'needs',
     });
+  };
 
   const addArea = async (event) => {
     event.preventDefault();
@@ -575,6 +599,45 @@ export default function AdminPage() {
             </div>
           )}
           {rows.needs && !rows.needs.items.length && <p className="empty">No needs found.</p>}
+        </section>
+      )}
+
+      {tab === 'removals' && (
+        <section className="panel table">
+          <div className="admin-head">
+            <h2>Removed <small>({rows.removals?.total ?? '…'})</small></h2>
+            <SearchBar value={searchTerm} onChange={setSearchTerm} onSearch={() => loadTab('removals')} placeholder="Search title or owner" />
+          </div>
+          <p className="form-lead">Listings and needs that are gone: who removed them, when and why. Kept for 90 days. Removals from before this list existed are not shown.</p>
+          <FilterChips options={FILTERS.removals} value={filters.removals} onChange={(value) => changeFilter('removals', value)} />
+          {waiting('removals')}
+          {rows.removals && (
+            <div className="table-scroll">
+              <div className="table-head" style={{ '--cols': '1.1fr 2fr 1.2fr 1.3fr 1.6fr' }}>
+                <span>When</span><span>What</span><span>Owner</span><span>Removed by</span><span>Why</span>
+              </div>
+              {rows.removals.items.map((r) => (
+                <div className="table-row" key={r.id} style={{ '--cols': '1.1fr 2fr 1.2fr 1.3fr 1.6fr' }}>
+                  <small>{formatDateTime(r.created_at)}</small>
+                  <b>
+                    {r.title}
+                    <small>
+                      {[r.kind === 'NEED' ? 'Need' : 'Listing', labelOf(CATEGORIES, r.category), labelOf(r.kind === 'NEED' ? NEED_TYPES : LISTING_TYPES, r.item_type), r.amount > 0 ? formatPrice(r.amount) : '']
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </small>
+                  </b>
+                  <span>{r.owner_name || 'Removed member'}</span>
+                  <span>{r.removed_by_id ? (r.removed_by_id === r.owner_id ? 'The owner' : r.removed_by_name || 'Removed member') : 'Nobody (expired)'}</span>
+                  <span>
+                    <Pill tone={toneOf(REMOVAL_REASONS, r.reason)}>{labelOf(REMOVAL_REASONS, r.reason)}</Pill>
+                    {r.note && <small className="wrap">{r.note}</small>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {rows.removals && !rows.removals.items.length && <p className="empty">Nothing has been removed.</p>}
         </section>
       )}
 

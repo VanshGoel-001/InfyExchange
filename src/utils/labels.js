@@ -76,6 +76,18 @@ export const DECLINE_REPLIES = [
   'Sorry, not a good fit',
 ];
 
+// Why a listing or need is gone. An owner picks one of the first four (`choice` is how it reads in the picker);
+// the last two are set by the system. `label` is how it reads in the admin Removed tab.
+export const REMOVAL_REASONS = [
+  { value: 'OWNER_SOLD', label: 'Sold or rented out', choice: 'Sold or rented out', tone: 'green' },
+  { value: 'OWNER_UNAVAILABLE', label: 'No longer available', choice: 'No longer available', tone: 'blue' },
+  { value: 'OWNER_MISTAKE', label: 'Posted by mistake', choice: 'Posted by mistake', tone: 'blue' },
+  { value: 'OWNER_DELETED', label: 'Deleted by owner', choice: 'Another reason', tone: 'blue' },
+  { value: 'ADMIN_REMOVED', label: 'Removed by an admin', tone: 'pink' },
+  { value: 'EXPIRED', label: 'Expired', tone: 'pending' },
+];
+export const OWNER_REMOVAL_REASONS = REMOVAL_REASONS.slice(0, 4);
+
 // A chat exists while the owner is chatting with someone, and with the one person the deal closed with.
 export const hasChat = (enquiry) => enquiry.status === 'ACCEPTED' || (enquiry.status === 'CLOSED' && !!enquiry.deal_closed_at);
 

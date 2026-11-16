@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
@@ -10,6 +10,9 @@ from app.dependencies import get_complete_user, get_current_user
 from app.models.need import Need
 from app.models.user import User
 from app.schemas.need import NeedCreate, NeedResponse
+from app.schemas.removal import OwnerRemoval
+from app.services import idempotency
+from app.services.removals import record_need_removal
 from app.services.rate_limit import (
     client_key,
     create_limiter,
@@ -19,6 +22,7 @@ from app.utils.enums import (
     ListingCategory,
     NeedStatus,
     NeedType,
+    RemovalReason,
 )
 
 
@@ -61,6 +65,16 @@ def create_need(
     current_user: User = Depends(get_complete_user),
     db: Session = Depends(get_db),
 ):
+
+    idem = idempotency.begin(db, request, current_user, "need.create")
+
+    if idem.replay_id is not None:
+        replayed = db.get(Need, idem.replay_id)
+
+        if replayed is None:
+            raise idempotency.already_done()
+
+        return replayed
 
     create_limiter.enforce(
         client_key(request, "create-need"),
@@ -108,6 +122,8 @@ def create_need(
     )
 
     db.add(need)
+    db.flush()
+    idem.finish(need.id)
     db.commit()
     db.refresh(need)
 
@@ -241,6 +257,7 @@ def get_need(
 )
 def delete_need(
     need_id: int,
+    data: OwnerRemoval | None = Body(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -258,6 +275,13 @@ def delete_need(
             status_code=403,
             detail="You can only delete your own need",
         )
+
+    record_need_removal(
+        db,
+        need,
+        RemovalReason(data.reason) if data else RemovalReason.OWNER_DELETED,
+        removed_by_id=current_user.id,
+    )
 
     db.delete(need)
     db.commit()

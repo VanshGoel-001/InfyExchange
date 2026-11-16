@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useForm } from '../hooks/useForm';
 import { api, toFailure } from '../services/api';
 import { InlineError } from '../components/Section';
+import { newKey } from '../utils/idempotency';
 import { failureCopy } from '../utils/messages';
 import {
   CLOSE_DEAL_VERBS,
@@ -70,6 +71,8 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [reporting, setReporting] = useState(false);
   const lastId = useRef(0);
+  // One key for the message in the box: tapping retry resends the same message, so it cannot arrive twice.
+  const sendKey = useRef(null);
   const loaded = useRef(false);
   const list = useRef(null);
 
@@ -146,7 +149,9 @@ export default function ChatPage() {
     setActionError('');
     setSendFailed(null);
     try {
-      await api.sendMessage(id, body, token);
+      sendKey.current ??= newKey();
+      await api.sendMessage(id, body, token, sendKey.current);
+      sendKey.current = null;
       setDraft('');
       await poll();
     } catch (err) {
@@ -291,7 +296,10 @@ export default function ChatPage() {
               value={draft}
               maxLength={LIMITS.chatMessage}
               rows={2}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                sendKey.current = null;
+                setDraft(event.target.value);
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) send(event);
               }}

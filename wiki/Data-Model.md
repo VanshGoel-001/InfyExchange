@@ -1,6 +1,6 @@
 # Data Model
 
-Twelve tables, all defined with SQLAlchemy 2 declarative models in `backend/app/models/`. Revisions: `ee1edd3df3f3` initial schema (2026-10-19) → `b7c41d9e5a20` Google sign-in → `c3a8f1d27b64` enquiry deal flow, chat, notifications, blocks, reports → `d5b2e9a14c70` failed emails → `e7a3c1d94b52` pickup areas → `f2c9a6b17d34` notification actor, listing title and detail → `h4e2c9f63b17` notification expiry.
+Fourteen tables, all defined with SQLAlchemy 2 declarative models in `backend/app/models/`. Revisions: `ee1edd3df3f3` initial schema (2026-10-19) → `b7c41d9e5a20` Google sign-in → `c3a8f1d27b64` enquiry deal flow, chat, notifications, blocks, reports → `d5b2e9a14c70` failed emails → `e7a3c1d94b52` pickup areas → `f2c9a6b17d34` notification actor, listing title and detail → `h4e2c9f63b17` notification expiry → `i5f3d0a74c28` idempotency keys and removal record.
 
 ## Entity-relationship diagram
 
@@ -184,6 +184,12 @@ Unique constraint **`unique_listing_interest (listing_id, interested_user_id)`**
 
 Mirror of listings for requests: `user_id`, `title`, `category` (shares the `listingcategory` enum), `need_type` (`BUY`/`RENT`/`BORROW`), `duration` (free text), `budget` (int, default 0), `location`, `description`, `status` (`ACTIVE`/`FULFILLED`/`CLOSED`), `created_at`, `expires_at`.
 
+### `idempotency_keys`
+One row per remembered write: `user_id` (FK, cascade), `key` (16-64 chars), `scope` (`listing.create`, `need.create`, `interest.create:<listing id>`, `message.send:<enquiry id>`), `resource_id` (what the first attempt created; empty only while it is still running), `created_at`. Unique on (`user_id`, `key`). Rows are claimed and completed in the same transaction as the write; the daily cleanup deletes rows older than `IDEMPOTENCY_KEY_HOURS` (24).
+
+### `removals`
+One row per listing or need that is gone: `kind` (`LISTING`/`NEED`), `item_id` (the id it had; not a foreign key), `title`, `category`, `item_type`, `amount`, `owner_id` and `removed_by_id` (FKs, set null if the account is deleted; `removed_by_id` is empty for expiry), `reason` (`OWNER_SOLD`, `OWNER_UNAVAILABLE`, `OWNER_MISTAKE`, `OWNER_DELETED`, `ADMIN_REMOVED`, `EXPIRED`; plain text, not a database enum), `note` (the reason an admin typed, up to 200 characters), `created_at`. No contact details. The daily cleanup deletes rows older than `REMOVAL_RETENTION_DAYS` (90). Removals before this release have no row.
+
 ### `audit_logs`
 
 | Column | Notes |
@@ -243,6 +249,7 @@ All timestamps are **naive UTC** values created with `datetime.utcnow()` and sto
 - Startup migration (`services/migration.py`) passes a live connection to Alembic via `config.attributes["connection"]` after taking a **PostgreSQL transaction-level advisory lock** (`pg_advisory_xact_lock(74193820416)`). Concurrent Cloud Run instances therefore serialise their `upgrade head`.
 - `d5b2e9a14c70` (failed emails) is deliberately separate from `c3a8f1d27b64` so the one table added for email is easy to review on its own. `c3a8f1d27b64` also backfills `last_activity_at = now` for enquiries that were already `ACCEPTED`, so their first inactivity reminder comes 48 hours after the deploy, not at once.
 - `e7a3c1d94b52` (pickup areas) adds the table, two nullable listing columns and the seed rows, and converts existing locations: `ECC87` / `ECC 92` become area ECC with that block; text that matches no area becomes `Other` and the original wording is dropped (by decision). It was run on SQLite only (including a test with old-style rows); run it on a Neon branch before relying on it.
+- `i5f3d0a74c28` (idempotency keys, removals) only creates two new tables the previous release never touches. Tested on SQLite only; try it on a Neon branch first.
 - `f2c9a6b17d34` (notification fields) only adds three nullable columns and a foreign key. `h4e2c9f63b17` (notification expiry) adds `expires_at` with a database default of now + 30 days, so rows the previous release inserts still get one, and sets every existing row to `created_at + 30 days`: notifications older than 30 days (including any old test rows) disappear from the bell as soon as it runs. Both were run on SQLite only; try them on a Neon branch first.
 - Rollouts must stay backward-compatible with the previous Cloud Run revision (old code runs against the new schema while traffic shifts). Destructive changes need a staged plan; see [CI/CD & Deployment](CI-CD-and-Deployment.md#rollback).
 

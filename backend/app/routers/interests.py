@@ -28,7 +28,7 @@ from app.schemas.interest import (
     InterestResponse,
     ReceivedAnswer,
 )
-from app.services import email_service
+from app.services import email_service, idempotency
 from app.services.notify import (
     is_blocked_between,
     notify,
@@ -177,6 +177,16 @@ def create_interest(
     db: Session = Depends(get_db),
 ):
 
+    idem = idempotency.begin(db, request, current_user, f"interest.create:{listing_id}")
+
+    if idem.replay_id is not None:
+        replayed = db.get(Interest, idem.replay_id)
+
+        if replayed is None:
+            raise idempotency.already_done()
+
+        return replayed
+
     create_limiter.enforce(
         client_key(request, "create-interest"),
         "Too many interests submitted. Please try again later.",
@@ -270,6 +280,7 @@ def create_interest(
             listing_title=listing.title,
         )
 
+        idem.finish(interest.id)
         db.commit()
     except IntegrityError:
         # Two simultaneous submissions both passed the check above; the unique

@@ -280,7 +280,7 @@ function InterestPanel({ item, id }) {
   const { bind, values, error } = form;
 
   const send = form.handleSubmit(async () => {
-    await api.createInterest(id, { message: values.message.trim() }, token);
+    await api.createInterest(id, { message: values.message.trim() }, token, form.idempotencyKey());
     setSent(true);
   });
 

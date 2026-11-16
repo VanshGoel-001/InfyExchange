@@ -4,13 +4,17 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.failed_email import FailedEmail
+from app.models.idempotency_key import IdempotencyKey
 from app.models.listing import Listing
 from app.models.need import Need
 from app.models.notification import Notification
+from app.models.removal import Removal
 from app.services.cloudinary import delete_image
-from app.utils.enums import ListingStatus
+from app.services.removals import record_listing_removal, record_need_removal
+from app.utils.enums import ListingStatus, RemovalReason
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,7 @@ def cleanup_expired_data():
                         exc,
                     )
 
+            record_listing_removal(db, listing, RemovalReason.EXPIRED)
             db.delete(listing)
 
         expired_needs = db.scalars(
@@ -57,6 +62,7 @@ def cleanup_expired_data():
         ).all()
 
         for need in expired_needs:
+            record_need_removal(db, need, RemovalReason.EXPIRED)
             db.delete(need)
 
         stale_emails = db.scalars(
@@ -73,6 +79,18 @@ def cleanup_expired_data():
         expired_notifications = db.execute(
             delete(Notification).where(Notification.expires_at <= now)
         ).rowcount
+
+        # Old removal records and remembered retries have done their job.
+        db.execute(
+            delete(Removal).where(
+                Removal.created_at <= now - timedelta(days=settings.removal_retention_days)
+            )
+        )
+        db.execute(
+            delete(IdempotencyKey).where(
+                IdempotencyKey.created_at <= now - timedelta(hours=settings.idempotency_key_hours)
+            )
+        )
 
         db.commit()
 

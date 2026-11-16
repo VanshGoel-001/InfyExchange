@@ -1,4 +1,4 @@
-import { Clock } from 'lucide-react';
+import { Clock, ShieldAlert } from 'lucide-react';
 import { cleanName, initials } from './labels';
 
 // Notifications arrive as structured fields (kind, actor_name, listing_title, detail, ...). The wording is built
@@ -43,7 +43,9 @@ const RECEIVED = {
 };
 
 // System notices with nobody behind them. Every other kind needs a named sender or it is not shown.
-const NO_SENDER = new Set(['enquiry_expired', 'enquiry_closed']);
+// An admin's removal is shown as "An admin": who it was stays in the Admin log.
+const ADMIN_REMOVAL = { listing_removed_by_admin: 'listing', need_removed_by_admin: 'need' };
+const NO_SENDER = new Set(['enquiry_expired', 'enquiry_closed', ...Object.keys(ADMIN_REMOVAL)]);
 
 const CHAT_KINDS = new Set(['new_message', 'enquiry_accepted', 'deal_closed', 'price_changed', 'item_returned', 'completion_reminder', 'received_answer']);
 const ENQUIRY_KINDS = new Set(['enquiry_received', 'enquiry_declined', 'enquiry_closed', 'enquiry_expired']);
@@ -67,6 +69,8 @@ export function describeNotification(item) {
     title = [{ text: 'Your enquiry expired' }];
   } else if (item.kind === 'enquiry_closed') {
     title = [{ text: 'A listing is no longer available' }];
+  } else if (item.kind in ADMIN_REMOVAL) {
+    title = [{ text: `An admin removed your ${ADMIN_REMOVAL[item.kind]}` }];
   } else {
     const action = item.kind === 'received_answer' ? RECEIVED[item.detail] ?? 'replied about the handover' : ACTIONS[item.kind] ?? 'has an update for you';
     title = [{ text: name, name: true }, { text: ` ${action}` }];
@@ -75,14 +79,18 @@ export function describeNotification(item) {
   let secondary = listing;
   if (item.kind === 'new_message' && item.detail) secondary = plainPreview(item.detail);
   if (item.kind === 'price_changed' && item.detail) secondary = [clip(item.detail, 40), listing].filter(Boolean).join(' · ');
+  // The reason matters more than the title, so it gets room to wrap.
+  const removal = item.kind in ADMIN_REMOVAL;
+  if (removal) secondary = [listing && `“${listing}”`, item.detail && `Reason: ${clip(item.detail, 120)}`].filter(Boolean).join(' · ');
 
   // The related page: the chat, the enquiries page, or the listing itself.
   let to = '/listings';
   if (CHAT_KINDS.has(item.kind) && item.interest_id) to = `/chats/${item.interest_id}`;
   else if (ENQUIRY_KINDS.has(item.kind)) to = '/activity';
+  else if (item.kind === 'need_removed_by_admin') to = '/needs';
   else if (item.listing_id) to = `/listings/${item.listing_id}`;
 
-  return { title, secondary, avatar: system ? null : initials(item.actor_name), Icon: Clock, to };
+  return { title, secondary, wrap: removal, avatar: system ? null : initials(item.actor_name), Icon: removal ? ShieldAlert : Clock, to };
 }
 
 // "Just now", "5m ago", "2h ago", "Yesterday", "3d ago", then "14 Nov" (with the year when it is not this year).

@@ -13,7 +13,7 @@ from app.models import AuditLog, Interest, Listing, Need, User
 from app.services import rate_limit
 from app.utils.enums import InterestStatus, ListingStatus, NeedStatus
 from tests.conftest import auth_headers, make_user
-from tests.support import add_image, add_interest, add_listing, add_need
+from tests.support import add_image, add_interest, add_listing, add_need, admin_delete
 
 ADMIN = "/api/admin"
 
@@ -265,18 +265,18 @@ class TestAdminListings:
         owner, buyer = make_user(db_session), make_user(db_session)
         listing = add_listing(db_session, owner, title="Remove me")
         add_interest(db_session, listing, buyer)
-        response = client.delete(f"{ADMIN}/listings/{listing.id}", headers=auth_headers(admin))
+        response = admin_delete(client, f"{ADMIN}/listings/{listing.id}", auth_headers(admin))
         assert response.status_code == 200
         db_session.expire_all()
         assert _count(db_session, Listing) == 0
         assert _count(db_session, Interest) == 0
         (entry,) = _audit(db_session)
         assert entry.action == "DELETE_LISTING"
-        assert json.loads(entry.details) == {"title": "Remove me"}
+        assert json.loads(entry.details) == {"title": "Remove me", "reason": "Breaks the rules"}
 
     def test_delete_unknown_listing_is_404(self, client, admin):
         """TC-API-ADM-047 | AC-12.5 | T12 | negative | missing listing gives 404"""
-        assert client.delete(f"{ADMIN}/listings/999999", headers=auth_headers(admin)).status_code == 404
+        assert admin_delete(client, f"{ADMIN}/listings/999999", auth_headers(admin)).status_code == 404
 
 
 class TestAdminNeeds:
@@ -300,15 +300,15 @@ class TestAdminNeeds:
     def test_delete_removes_need_and_audits(self, client, db_session, admin):
         """TC-API-ADM-052 | AC-12.6, AC-13.1 | T12 | positive | deleting a need removes it and writes DELETE_NEED with its title"""
         need_id = add_need(db_session, make_user(db_session), title="Take down").id
-        assert client.delete(f"{ADMIN}/needs/{need_id}", headers=auth_headers(admin)).status_code == 200
+        assert admin_delete(client, f"{ADMIN}/needs/{need_id}", auth_headers(admin)).status_code == 200
         assert _count(db_session, Need) == 0
         (entry,) = _audit(db_session)
         assert (entry.action, entry.target_type, entry.target_id) == ("DELETE_NEED", "NEED", str(need_id))
-        assert json.loads(entry.details) == {"title": "Take down"}
+        assert json.loads(entry.details) == {"title": "Take down", "reason": "Breaks the rules"}
 
     def test_delete_unknown_need_is_404(self, client, admin):
         """TC-API-ADM-053 | AC-12.6 | T12 | negative | missing need gives 404"""
-        assert client.delete(f"{ADMIN}/needs/999999", headers=auth_headers(admin)).status_code == 404
+        assert admin_delete(client, f"{ADMIN}/needs/999999", auth_headers(admin)).status_code == 404
 
 
 class TestAuditLog:
@@ -317,7 +317,7 @@ class TestAuditLog:
         listing = add_listing(db_session, make_user(db_session))
         need = add_need(db_session, make_user(db_session))
         headers = auth_headers(admin)
-        client.delete(f"{ADMIN}/needs/{need.id}", headers=headers)
+        admin_delete(client, f"{ADMIN}/needs/{need.id}", headers)
         client.patch(f"{ADMIN}/listings/{listing.id}/status", params={"status": "SOLD"}, headers=headers)
         body = client.get(f"{ADMIN}/audit-logs", headers=headers).json()
         assert body["total"] == 2
@@ -338,6 +338,6 @@ class TestAuditLog:
         headers = auth_headers(admin)
         for _ in range(3):
             need = add_need(db_session, make_user(db_session))
-            client.delete(f"{ADMIN}/needs/{need.id}", headers=headers)
+            admin_delete(client, f"{ADMIN}/needs/{need.id}", headers)
         page = client.get(f"{ADMIN}/audit-logs", params={"limit": 2, "skip": 2}, headers=headers).json()
         assert page["total"] == 3 and len(page["items"]) == 1

@@ -62,7 +62,7 @@ There is no frontend test runner or linter. **Before saying a change works:** ba
 ```
 src/                 React 19 + Vite 8. pages/ (screens) · components/ · hooks/useForm.js · context/AuthContext.jsx · services/api.js · utils/ (labels.js = enum to text, validate.js = form rules, filters.js)
 backend/app/         routers/ (HTTP + business rules) · models/ · schemas/ · services/ · dependencies.py · middleware.py · config.py · main.py
-backend/alembic/     seven revisions: ee1edd3df3f3 -> b7c41d9e5a20 -> c3a8f1d27b64 (enquiry flow, chat, bell) -> d5b2e9a14c70 (failed emails) -> e7a3c1d94b52 (pickup areas) -> f2c9a6b17d34 (notification fields) -> h4e2c9f63b17 (notification expiry)
+backend/alembic/     eight revisions: ee1edd3df3f3 -> b7c41d9e5a20 -> c3a8f1d27b64 (enquiry flow, chat, bell) -> d5b2e9a14c70 (failed emails) -> e7a3c1d94b52 (pickup areas) -> f2c9a6b17d34 (notification fields) -> h4e2c9f63b17 (notification expiry) -> i5f3d0a74c28 (idempotency keys, removal record)
 backend/tests/       conftest.py swaps in SQLite and disables the lifespan; tests/support.py = builders. New tests carry TC-/AC-/T ids in docstrings
 test.md              Test plan (generated tables mirror those docstrings; derived baseline, not approved)
 docs/security/       threat model, runbook, pipeline, asset inventory, acceptance criteria, test plan
@@ -95,6 +95,8 @@ Where to look for what: endpoints & rules → `wiki/API-Reference.md`; tables �
 - `VITE_API_BASE_URL` must end in `/api` with no trailing slash (build enforces it) and is baked in at build time.
 - Render user content through React only (no `dangerouslySetInnerHTML`). The JWT is in `localStorage`, so XSS is the main threat.
 - Never turn a failed or empty fetch into `0`, `[]` or sample values. Load through `useLoad` / `safe()`, tell loading, empty and failed apart, and word failures only through `utils/messages.js` (`InlineError`, one line plus one action). Writes keep what the person typed.
+- Posting a listing or need, sending an enquiry and sending a chat message carry an `Idempotency-Key` (`useForm.idempotencyKey()`; the chat page keeps its own). The key is reused on retry and renewed after a success or any edit. Server side it is claimed and finished inside the same transaction as the write (`services/idempotency.py`), so a failed request frees its key.
+- Every way a listing or need is removed (owner, admin, expiry) writes a `removals` row in the same transaction as the delete (`services/removals.py`). An admin removal requires a reason (3-200 characters), which the owner is shown.
 - Client validation (`src/utils/validate.js`) mirrors server limits (lengths, whole-rupee amounts, image count/size). Change both together; the server is authoritative.
 - Never show an API code (`SELL`, `SP_L1`, `UPDATE_USER`) to a person: map it in `src/utils/labels.js`. Screens say "listing", "need" and "enquiry" (interest).
 - CSP ships report-only (`CSP_ENFORCE=false` in `vite.config.js`). Don't flip it without the burn-in described in the runbook.
