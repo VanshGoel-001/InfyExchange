@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -56,9 +56,22 @@ class Listing(Base):
         nullable=False,
     )
 
+    # Display text such as "ECC - 87", kept in step with pickup_area_id/block_no. Rows written by
+    # the previous release only have this column, so the two new ones stay nullable.
     location: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+    )
+
+    pickup_area_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pickup_areas.id"),
+        nullable=True,
+        index=True,
+    )
+
+    block_no: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        nullable=True,
     )
 
     description: Mapped[str] = mapped_column(
@@ -91,10 +104,18 @@ class Listing(Base):
         back_populates="listings",
     )
 
+    # Joined on every load: it is a handful of rows and every listing payload shows the area name.
+    pickup_area = relationship(
+        "PickupArea",
+        lazy="joined",
+    )
+
+    # Upload order, so the first photo is always the one shown on cards and the detail page.
     images = relationship(
         "ListingImage",
         back_populates="listing",
         cascade="all, delete-orphan",
+        order_by="ListingImage.id",
     )
 
     interests = relationship(

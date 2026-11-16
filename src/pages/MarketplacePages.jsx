@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeftRight, CircleCheck, IndianRupee, MapPin, Sparkles, Tag } from 'lucide-react';
+import { CircleCheck, MapPin, Sparkles, Tag } from 'lucide-react';
 import { Header } from '../components/Layout';
 import { Banner, Field, Flash, FormError, Pill } from '../components/Ui';
 import { ProductCard } from '../components/Cards';
+import Gallery from '../components/Gallery';
 import { SkeletonCard } from '../components/ErrorBoundary';
-import { api } from '../services/api';
+import { api, safe } from '../services/api';
+import { useLoad } from '../hooks/useLoad';
+import { InlineError, SectionBoundary, SkeletonList } from '../components/Section';
+import { currentPath } from '../utils/redirect';
 import { applyClientFilters } from '../utils/filters';
 import {
   CATEGORIES,
@@ -23,17 +27,21 @@ import { LIMITS, validateInterest } from '../utils/validate';
 import { useAuth } from '../context/AuthContext';
 import { useForm } from '../hooks/useForm';
 
-function Filters({ filters, setFilters, apply, clear }) {
+function Filters({ filters, setFilters, apply, clear, areaLoad }) {
+  const areas = areaLoad.data;
   const change = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
   const priceRangeWrong =
     filters.min_price !== '' && filters.max_price !== '' && Number(filters.min_price) > Number(filters.max_price);
+  const area = areas?.find((a) => String(a.id) === String(filters.pickup_area_id));
+  const blockWrong =
+    filters.block_no !== '' && (Number(filters.block_no) < LIMITS.block[0] || Number(filters.block_no) > LIMITS.block[1]);
 
   return (
     <form
       className="filters"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!priceRangeWrong) apply();
+        if (!priceRangeWrong && !blockWrong) apply();
       }}
     >
       <div className="filters-head">
@@ -45,7 +53,7 @@ function Filters({ filters, setFilters, apply, clear }) {
 
       <label>
         Search
-        <input value={filters.search} onChange={(e) => change('search', e.target.value)} placeholder="Search by item name" />
+        <input value={filters.search} onChange={(e) => change('search', e.target.value)} placeholder="Search by listing name" />
       </label>
 
       <label>
@@ -79,9 +87,32 @@ function Filters({ filters, setFilters, apply, clear }) {
       </label>
 
       <label>
-        Location
-        <input value={filters.location} onChange={(e) => change('location', e.target.value)} placeholder="e.g. ECC, Food Court" />
+        Pickup area
+        <select
+          value={filters.pickup_area_id}
+          disabled={!areas}
+          onChange={(e) => setFilters((f) => ({ ...f, pickup_area_id: e.target.value, block_no: '' }))}
+        >
+          <option value="">{areas || areaLoad.status === 'ready' ? 'Any area' : 'Unavailable'}</option>
+          {areas?.map((x) => (
+            <option key={x.id} value={x.id}>{x.name}</option>
+          ))}
+        </select>
       </label>
+      {areaLoad.status === 'failed' && !areas && <InlineError error={areaLoad.error} context="generic" onRetry={areaLoad.reload} />}
+
+      {area?.has_blocks && (
+        <label>
+          Block no.
+          <input
+            inputMode="numeric"
+            value={filters.block_no}
+            onChange={(e) => change('block_no', e.target.value.replace(/\D/g, '').slice(0, 3))}
+            placeholder="Optional, 1 to 100"
+          />
+          {blockWrong && <small className="field-error" role="alert">Block number must be between 1 and 100.</small>}
+        </label>
+      )}
 
       <fieldset className="price-range">
         <legend>Price (₹)</legend>
@@ -108,7 +139,7 @@ function Filters({ filters, setFilters, apply, clear }) {
         {priceRangeWrong && <small className="field-error" role="alert">“From” must not be higher than “To”.</small>}
       </fieldset>
 
-      <button type="submit" className="primary" disabled={priceRangeWrong}>
+      <button type="submit" className="primary" disabled={priceRangeWrong || blockWrong}>
         Show results
       </button>
     </form>
@@ -119,12 +150,14 @@ export function ListingsPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { token, user, loading: authLoading } = useAuth();
-  const [items, setItems] = useState([]);
+  // null until the first real answer: an empty list is a real answer, a failed request is not.
+  const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [failure, setFailure] = useState(null);
+  const areaLoad = useLoad(() => api.pickupAreas(), []);
 
   const mine = params.get('scope') === 'mine';
-  const keys = ['search', 'category', 'listing_type', 'condition', 'location', 'min_price', 'max_price'];
+  const keys = ['search', 'category', 'listing_type', 'condition', 'pickup_area_id', 'block_no', 'min_price', 'max_price'];
   const initial = Object.fromEntries(keys.map((k) => [k, params.get(k) || '']));
   const [filters, setFilters] = useState(initial);
 
@@ -134,24 +167,22 @@ export function ListingsPage() {
   const load = async (query) => {
     const ticket = ++latest.current;
     setLoading(true);
-    try {
-      setError('');
-      const clean = Object.fromEntries(Object.entries(query).filter(([key, value]) => key !== 'scope' && value !== ''));
-      const data = mine ? await api.myListings(token) : await api.listings({ limit: 100, ...clean });
-      const filtered = mine && Object.keys(clean).length ? applyClientFilters(data, clean) : data;
-      if (ticket === latest.current) setItems(filtered);
-    } catch (err) {
-      if (ticket !== latest.current) return;
-      setItems([]);
-      setError(err.message);
-    } finally {
-      if (ticket === latest.current) setLoading(false);
+    const clean = Object.fromEntries(Object.entries(query).filter(([key, value]) => key !== 'scope' && value !== ''));
+    const result = await safe(mine ? api.myListings(token) : api.listings({ limit: 100, ...clean }));
+    if (ticket !== latest.current || result.aborted) return;
+    setLoading(false);
+    if (!result.ok) {
+      // Keep the previous results on screen and say so in one line; never turn a failure into "no listings".
+      setFailure(result.error);
+      return;
     }
+    setFailure(null);
+    setItems(mine && Object.keys(clean).length ? applyClientFilters(result.data, clean) : result.data);
   };
 
   useEffect(() => {
     if (mine && !authLoading && !user) {
-      navigate('/login', { replace: true });
+      navigate(`/login?next=${encodeURIComponent(currentPath())}`, { replace: true });
       return;
     }
     if (mine && authLoading) return;
@@ -178,55 +209,59 @@ export function ListingsPage() {
     <>
       <Header />
       <div className="page-layout catalogue-layout">
-        <Filters filters={filters} setFilters={setFilters} apply={apply} clear={clear} />
+        <SectionBoundary name="filters" context="generic"><Filters filters={filters} setFilters={setFilters} apply={apply} clear={clear} areaLoad={areaLoad} /></SectionBoundary>
         <main>
           <Banner
-            title={mine ? 'My items' : 'Browse items'}
+            title={mine ? 'My listings' : 'Browse listings'}
             subtitle={
               mine
-                ? 'Items you have posted on InfyExchange.'
+                ? 'Listings you have posted on InfyExchange.'
                 : 'Find sports gear from fellow trainees: buy it, rent it, borrow it, or get it free.'
             }
           />
           {mine && (
             <p className="scope-note">
-              Showing only items you posted. <Link to="/listings">See everything</Link>
+              Showing only listings you posted. <Link to="/listings">See everything</Link>
             </p>
           )}
 
           <div className="listing-toolbar">
             <h2>
-              {loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'item' : 'items'}${filtered ? ' match your filters' : ''}`}
+              {items === null ? (loading ? 'Loading…' : 'Listings') : `${items.length} ${items.length === 1 ? 'listing' : 'listings'}${filtered ? ' match your filters' : ''}`}
             </h2>
           </div>
 
-          {loading ? (
-            <div className="grid listing-grid">
-              {[...Array(6)].map((_, i) => (
-                <SkeletonCard key={i} />
-              ))}
-            </div>
-          ) : (
-            <div className="grid listing-grid">
-              {items.map((p, i) => (
-                <ProductCard item={p} i={i} key={p.id} />
-              ))}
-            </div>
-          )}
+          <SectionBoundary name="listings list" context="listings">
+            {failure && <InlineError error={failure} context={filters.search ? 'search' : 'listings'} onRetry={() => load(Object.fromEntries(params.entries()))} />}
 
-          {!loading && !items.length && (
+            {items === null && loading && (
+              <div className="grid listing-grid">
+                {[...Array(6)].map((_, i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            )}
+
+            {items !== null && (
+              <div className="grid listing-grid">
+                {items.map((p, i) => (
+                  <ProductCard item={p} i={i} key={p.id} />
+                ))}
+              </div>
+            )}
+          </SectionBoundary>
+
+          {items !== null && !loading && !items.length && !failure && (
             <div className="empty-block">
-              {error ? (
-                <p role="alert" className="error">{error}</p>
-              ) : filtered ? (
+              {filtered ? (
                 <>
                   <p>Nothing matches those filters.</p>
                   <button type="button" className="outline" onClick={clear}>Clear filters</button>
                 </>
               ) : (
                 <>
-                  <p>{mine ? 'You have not posted anything yet.' : 'No items have been posted yet.'}</p>
-                  <Link className="primary" to="/listings/new">Post an item</Link>
+                  <p>{mine ? 'You have not posted anything yet.' : 'No listings have been posted yet.'}</p>
+                  <Link className="primary" to="/listings/new">Post a listing</Link>
                 </>
               )}
             </div>
@@ -241,7 +276,7 @@ function InterestPanel({ item, id }) {
   const navigate = useNavigate();
   const { token, user } = useAuth();
   const [sent, setSent] = useState(false);
-  const form = useForm({ message: '' }, validateInterest, ['message']);
+  const form = useForm({ message: '' }, validateInterest, ['message'], { context: 'enquiry' });
   const { bind, values, error } = form;
 
   const send = form.handleSubmit(async () => {
@@ -252,7 +287,7 @@ function InterestPanel({ item, id }) {
   if (user?.id === item.owner_id) {
     return (
       <div className="interest">
-        <h2>This is your item</h2>
+        <h2>This is your listing</h2>
         <p>Enquiries from other trainees appear under “Enquiries”.</p>
         <Link className="primary" to="/activity">See enquiries</Link>
       </div>
@@ -264,7 +299,7 @@ function InterestPanel({ item, id }) {
       <div className="interest">
         <h2>No longer available</h2>
         <p>This item is marked as {labelOf(LISTING_STATUSES, item.status).toLowerCase()}.</p>
-        <Link className="primary" to="/listings">Browse other items</Link>
+        <Link className="primary" to="/listings">Browse other listings</Link>
       </div>
     );
   }
@@ -272,7 +307,7 @@ function InterestPanel({ item, id }) {
   if (!token) {
     return (
       <div className="interest">
-        <h2>Interested in this item?</h2>
+        <h2>Interested in this listing?</h2>
         <p>Log in to send {item.owner_name?.split(' ')[0] || 'the owner'} an enquiry. It only takes a moment.</p>
         <button className="primary" onClick={() => navigate('/login')}>Log in to continue</button>
         <p className="aside-link">New here? <Link to="/register">Create an account</Link></p>
@@ -284,7 +319,7 @@ function InterestPanel({ item, id }) {
     return (
       <div className="interest">
         <h2>Finish your profile first</h2>
-        <p>We need your phone number and role before you can enquire about items.</p>
+        <p>We need your phone number and role before you can enquire about listings.</p>
         <Link className="primary" to="/complete-profile">Finish profile</Link>
       </div>
     );
@@ -305,11 +340,11 @@ function InterestPanel({ item, id }) {
 
   return (
     <form className="interest" onSubmit={send} noValidate>
-      <h2>Interested in this item?</h2>
+      <h2>Interested in this listing?</h2>
       <Field label="Message to the owner, optional" error={error('message')} hint={`${values.message.trim().length} / ${LIMITS.message[1]}`}>
         <textarea {...bind('message')} maxLength={LIMITS.message[1]} placeholder="e.g. Is it still available? Can I pick it up this evening?" />
       </Field>
-      <FormError>{form.formError}</FormError>
+      <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
       <button className="primary" disabled={form.busy} aria-busy={form.busy}>
         {form.busy ? 'Sending…' : 'Send enquiry'}
       </button>
@@ -317,48 +352,66 @@ function InterestPanel({ item, id }) {
   );
 }
 
+// Keeps the writer's line breaks and shows four lines until "Read more" is pressed.
+function Description({ text }) {
+  const body = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+
+  useLayoutEffect(() => {
+    const check = () => {
+      const el = body.current;
+      if (el && !open) setLong(el.scrollHeight > el.clientHeight + 1);
+    };
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, [text, open]);
+
+  return (
+    <section className="panel description">
+      <h2>Description</h2>
+      <p ref={body} className={open ? '' : 'clamped'}>{text}</p>
+      {(long || open) && (
+        <button type="button" className="read-more" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          {open ? 'Show less' : 'Read more'}
+        </button>
+      )}
+    </section>
+  );
+}
+
 export function DetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [item, setItem] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [notice, setNotice] = useState('');
+  // Three different answers: still loading, the server says there is no such listing, or the request failed.
+  const load = useLoad(() => api.listing(id), [id]);
+  const item = load.status === 'ready' ? load.data : null;
 
-  useEffect(() => {
-    let current = true; // ignore the answer if the person has moved to another item meanwhile
-    setLoading(true);
-    setNotice('');
-    api
-      .listing(id)
-      .then((data) => current && setItem(data))
-      .catch((e) => current && setNotice(e.message))
-      .finally(() => current && setLoading(false));
-    return () => {
-      current = false;
-    };
-  }, [id]);
-
-  if (loading) {
+  if (load.status === 'loading') {
     return (
       <>
         <Header />
         <main className="wide detail">
-          <p className="page-status">Loading item…</p>
+          <SkeletonList rows={3} />
         </main>
       </>
     );
   }
 
   if (!item) {
+    const gone = load.error?.kind === 'notfound';
     return (
       <>
         <Header />
         <main className="wide detail">
-          <p role="alert" className="error">
-            {notice || 'This item could not be found. It may have been removed.'}
-          </p>
+          {gone ? (
+            <p role="alert" className="error">This listing could not be found. It may have been removed.</p>
+          ) : (
+            <InlineError error={load.error} context="listings" onRetry={load.reload} />
+          )}
           <button className="primary" onClick={() => navigate('/listings')}>
-            Back to all items
+            Back to all listings
           </button>
         </main>
       </>
@@ -367,10 +420,8 @@ export function DetailPage() {
 
   const specs = [
     [Tag, 'Category', labelOf(CATEGORIES, item.category)],
-    [ArrowLeftRight, 'On offer as', labelOf(LISTING_TYPES, item.listing_type)],
     [Sparkles, 'Condition', labelOf(CONDITIONS, item.condition)],
-    [IndianRupee, 'Price', formatPrice(item.price, item.price_unit)],
-    [MapPin, 'Pickup location', item.location],
+    [MapPin, 'Pickup area', item.location],
     [CircleCheck, 'Availability', labelOf(LISTING_STATUSES, item.status)],
   ];
 
@@ -384,19 +435,7 @@ export function DetailPage() {
         </button>
 
         <div className="detail-grid">
-          <section>
-            <div className="detail-picture">
-              {item.images?.[0]?.image_url ? (
-                <img src={item.images[0].image_url} alt={item.title} />
-              ) : (
-                <span className="no-image">No photo added</span>
-              )}
-            </div>
-            <div className="panel description">
-              <h2>Description</h2>
-              <p>{item.description}</p>
-            </div>
-          </section>
+          <SectionBoundary name="photos" context="generic"><Gallery images={item.images} title={item.title} category={item.category} /></SectionBoundary>
 
           <section className="item-info">
             <Pill tone={toneOf(LISTING_TYPES, item.listing_type)}>{labelOf(LISTING_TYPES, item.listing_type)}</Pill>
@@ -426,8 +465,10 @@ export function DetailPage() {
               </b>
             </div>
 
-            <InterestPanel item={item} id={id} />
+            <SectionBoundary name="enquiry panel" context="enquiry"><InterestPanel item={item} id={id} /></SectionBoundary>
           </aside>
+
+          <SectionBoundary name="description" context="generic"><Description text={item.description} /></SectionBoundary>
         </div>
       </main>
     </>

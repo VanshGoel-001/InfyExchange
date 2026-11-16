@@ -62,8 +62,8 @@ class TestCreateListing:
     def test_title_and_text_fields_are_trimmed(self, client, db_session, monkeypatch):
         """TC-API-LST-003 | AC-04.3 | T08 | business | surrounding whitespace is stripped before saving"""
         install_fake_cloudinary(monkeypatch)
-        body = _create(client, make_user(db_session), title="  Racket  ", location="  ECC  ", description="  Good  ").json()
-        assert (body["title"], body["location"], body["description"]) == ("Racket", "ECC", "Good")
+        body = _create(client, make_user(db_session), title="  Racket  ", description="  Good  ").json()
+        assert (body["title"], body["description"]) == ("Racket", "Good")
 
     def test_unauthenticated_create_is_rejected(self, client):
         """TC-API-LST-004 | AC-04.6 | T08 | negative | no token: 401/403 and nothing is created"""
@@ -115,12 +115,11 @@ class TestCreateListing:
         "field, length, expected",
         [
             ("title", 1, 422), ("title", 2, 201), ("title", 150, 201), ("title", 151, 422),
-            ("location", 1, 422), ("location", 2, 201), ("location", 100, 201), ("location", 101, 422),
             ("description", 1, 422), ("description", 2, 201), ("description", 2000, 201), ("description", 2001, 422),
         ],
     )
     def test_text_field_length_boundaries(self, client, db_session, monkeypatch, field, length, expected):
-        """TC-API-LST-010 | AC-04.3 | T08 | boundary | title 2-150, location 2-100, description 2-2000 characters"""
+        """TC-API-LST-010 | AC-04.3 | T08 | boundary | title 2-150, description 2-2000 characters"""
         install_fake_cloudinary(monkeypatch)
         response = _create(client, make_user(db_session), **{field: "x" * length})
         assert response.status_code == expected

@@ -17,8 +17,10 @@ URL = "/api/notifications"
 
 
 def _add(db, user, message="hello", read=False, minutes_ago=0, kind="enquiry_received", interest_id=None):
+    # Every notification needs a named sender to be shown, so each of these has one.
+    sender = make_user(db)
     row = Notification(
-        user_id=user.id, kind=kind, message=message, interest_id=interest_id,
+        user_id=user.id, kind=kind, message=message, interest_id=interest_id, actor_id=sender.id,
         created_at=datetime.utcnow() - timedelta(minutes=minutes_ago),
         read_at=datetime.utcnow() if read else None,
     )
@@ -43,7 +45,7 @@ def test_list_is_newest_first_with_the_unread_total(client, db_session):
     body = client.get(URL, headers=auth_headers(me)).json()
     assert body["unread_count"] == 2
     assert [(i["id"], i["read"]) for i in body["items"]] == [(new.id, False), (mid.id, False), (old.id, True)]
-    assert set(body["items"][0]) == {"id", "kind", "message", "interest_id", "created_at", "read"}
+    assert set(body["items"][0]) == {"id", "kind", "actor_name", "listing_id", "listing_title", "detail", "interest_id", "created_at", "read"}
     assert body["items"][1]["interest_id"] == 7
 
 
@@ -75,7 +77,7 @@ def test_mark_one_read(client, db_session):
     """TC-API-NOT-006 | AC-09.1 | T10 | positive | marking one notification read lowers the count by one and leaves the others unread"""
     me = make_user(db_session)
     first, second = _add(db_session, me, "a"), _add(db_session, me, "b")
-    assert client.post(f"{URL}/{first.id}/read", headers=auth_headers(me)).json() == {"read": True}
+    assert client.post(f"{URL}/{first.id}/read", headers=auth_headers(me)).json() == {"unread_count": 1}
     assert client.post(f"{URL}/{first.id}/read", headers=auth_headers(me)).status_code == 200  # repeating is harmless
     body = client.get(URL, headers=auth_headers(me)).json()
     assert body["unread_count"] == 1

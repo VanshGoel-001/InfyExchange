@@ -8,7 +8,10 @@ class NotificationResponse(BaseModel):
 
     id: int
     kind: str
-    message: str
+    actor_name: str | None
+    listing_id: int | None
+    listing_title: str | None
+    detail: str | None
     interest_id: int | None
     created_at: datetime
     read: bool

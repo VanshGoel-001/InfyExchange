@@ -97,10 +97,14 @@ export const labelOf = (list, value) => (value == null || value === '' ? '' : fi
 export const toneOf = (list, value) => find(list, value)?.tone ?? 'blue';
 export const iconOf = (value) => find(CATEGORIES, value)?.icon ?? '📦';
 
+// The one way a rupee amount is written anywhere in the SPA: ₹ and Indian digit grouping (12,34,567).
+// The server does the same for notification text (backend/app/utils/money.py); keep them in step.
+export const formatRupees = (amount) => `₹${Number(amount).toLocaleString('en-IN')}`;
+
 export const formatPrice = (price, unit) => {
   const amount = Number(price);
   if (!(amount > 0)) return 'Free';
-  return `₹${amount.toLocaleString('en-IN')}${unit ? ` / ${unit}` : ''}`;
+  return `${formatRupees(amount)}${unit ? ` / ${unit}` : ''}`;
 };
 
 // The API sends UTC timestamps without a zone suffix; without one the browser would read them as local time.
@@ -113,6 +117,9 @@ const toDate = (iso) => {
   const date = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(text) ? text : `${text}Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 };
+
+// The server's timestamps parsed as UTC, for callers that need a Date (relative times).
+export const parseTime = toDate;
 
 export const formatDate = (iso) =>
   toDate(iso)?.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) ?? '';
@@ -128,4 +135,24 @@ export const daysLeft = (iso) => {
   return days === 1 ? '1 day left' : `${days} days left`;
 };
 
-export const initials = (name) => (name || '?').trim().slice(0, 2).toUpperCase();
+// Words that read as a web address ("http", "www", "x.com"); names may not contain them.
+export const looksLikeLink = (text) => /\b(?:https?|ftp)\b|\bwww\b|\p{L}\.\p{L}{2,}/iu.test(text);
+
+// A name made safe to show: link-like words and anything but letters, spaces and . ' - are dropped.
+export const cleanName = (name) =>
+  String(name ?? '')
+    .split(/\s+/)
+    .filter((word) => word && !looksLikeLink(word))
+    .join(' ')
+    .replace(/[^\p{L}\p{M} .'’-]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+// First letter of the first and last name ("Asha Rao" -> "AR"); a single name gives its first two letters.
+// Built from the cleaned name, so markup or links in an old name never reach an avatar.
+export const initials = (name) => {
+  const parts = cleanName(name).split(/\s+/).filter(Boolean).map((part) => Array.from(part));
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).join('').toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};

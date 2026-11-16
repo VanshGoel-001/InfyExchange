@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
@@ -15,8 +15,14 @@ from app.models.failed_email import FailedEmail
 from app.models.interest import Interest
 from app.models.listing import Listing
 from app.models.need import Need
+from app.models.pickup_area import PickupArea
 from app.models.report import Report
 from app.models.user import User
+from app.schemas.pickup_area import (
+    PickupAreaAdminResponse,
+    PickupAreaCreate,
+    PickupAreaUpdate,
+)
 from app.services import email_service
 from app.services.rate_limit import admin_limiter, rate_limit_dependency
 from app.utils.enums import InterestStatus, ListingStatus, NeedStatus
@@ -72,6 +78,10 @@ class AdminStats(BaseModel):
     active_needs: int
     total_interests: int
     accepted_interests: int
+    pending_interests: int = 0
+    rejected_interests: int = 0
+    total_reports: int = 0
+    failed_emails: int = 0
 
 
 class AuditLogResponse(BaseModel):
@@ -114,7 +124,14 @@ def get_admin_stats(db: Session = Depends(get_db)):
         or 0
     )
 
+    def interests_with(status: InterestStatus) -> int:
+        return db.scalar(select(func.count(Interest.id)).where(Interest.status == status)) or 0
+
     return {
+        "pending_interests": interests_with(InterestStatus.PENDING),
+        "rejected_interests": interests_with(InterestStatus.REJECTED),
+        "total_reports": db.scalar(select(func.count(Report.id))) or 0,
+        "failed_emails": db.scalar(select(func.count(FailedEmail.id))) or 0,
         "total_users": total_users,
         "active_users": active_users,
         "total_listings": total_listings,
@@ -131,9 +148,12 @@ def get_all_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     search: str | None = None,
+    status: Literal["active", "deactivated"] | None = None,
     db: Session = Depends(get_db),
 ):
     stmt = select(User).order_by(desc(User.created_at))
+    if status:
+        stmt = stmt.where(User.is_active.is_(status == "active"))
     if search:
         search_term = f"%{search.strip()}%"
         stmt = stmt.where((User.name.ilike(search_term)) | (User.email.ilike(search_term)))
@@ -579,3 +599,115 @@ def discard_failed_email(
 
     return {"message": "Email discarded", "email_id": email_id}
 
+
+def _clean_area_name(name: str) -> str:
+    cleaned = " ".join(name.split())
+    if len(cleaned) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="name: needs at least 2 characters, not counting spaces",
+        )
+    return cleaned
+
+
+def _area_name_taken(db: Session, name: str, except_id: int | None = None) -> bool:
+    query = select(PickupArea.id).where(func.lower(PickupArea.name) == name.lower())
+    if except_id is not None:
+        query = query.where(PickupArea.id != except_id)
+    return db.scalar(query) is not None
+
+
+@router.get("/pickup-areas", response_model=list[PickupAreaAdminResponse])
+def admin_list_pickup_areas(db: Session = Depends(get_db)):
+    return db.scalars(
+        select(PickupArea).order_by(PickupArea.sort_order, PickupArea.name)
+    ).all()
+
+
+@router.post(
+    "/pickup-areas",
+    response_model=PickupAreaAdminResponse,
+    status_code=201,
+)
+def admin_create_pickup_area(
+    data: PickupAreaCreate,
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    name = _clean_area_name(data.name)
+    if _area_name_taken(db, name):
+        raise HTTPException(status_code=409, detail="A pickup area with that name already exists")
+
+    area = PickupArea(
+        name=name,
+        has_blocks=data.has_blocks,
+        is_active=True,
+        sort_order=(db.scalar(select(func.max(PickupArea.sort_order))) or 0) + 1,
+    )
+    db.add(area)
+    db.flush()
+
+    log_admin_action(
+        db=db,
+        actor_id=current_admin.id,
+        action="CREATE_PICKUP_AREA",
+        target_type="PICKUP_AREA",
+        target_id=str(area.id),
+        ip_address=request.client.host if request.client else None,
+        details={"name": name, "has_blocks": data.has_blocks},
+    )
+    db.commit()
+    db.refresh(area)
+    return area
+
+
+@router.patch("/pickup-areas/{area_id}", response_model=PickupAreaAdminResponse)
+def admin_update_pickup_area(
+    area_id: int,
+    data: PickupAreaUpdate,
+    request: Request,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    area = db.get(PickupArea, area_id)
+    if not area:
+        raise HTTPException(status_code=404, detail="Pickup area not found")
+
+    changes: dict[str, Any] = {}
+
+    if data.name is not None:
+        name = _clean_area_name(data.name)
+        if _area_name_taken(db, name, except_id=area.id):
+            raise HTTPException(status_code=409, detail="A pickup area with that name already exists")
+        if name != area.name:
+            changes["name"] = {"old": area.name, "new": name}
+            area.name = name
+
+    if data.has_blocks is not None and data.has_blocks != area.has_blocks:
+        changes["has_blocks"] = {"old": area.has_blocks, "new": data.has_blocks}
+        area.has_blocks = data.has_blocks
+
+    if data.is_active is not None and data.is_active != area.is_active:
+        changes["is_active"] = {"old": area.is_active, "new": data.is_active}
+        area.is_active = data.is_active
+
+    if "name" in changes or "has_blocks" in changes:
+        # The display text on existing listings must follow a rename; a block number only
+        # shows while the area still has blocks.
+        for listing in db.scalars(select(Listing).where(Listing.pickup_area_id == area.id)):
+            show_block = listing.block_no if area.has_blocks else None
+            listing.location = f"{area.name} - {show_block}" if show_block else area.name
+
+    log_admin_action(
+        db=db,
+        actor_id=current_admin.id,
+        action="UPDATE_PICKUP_AREA",
+        target_type="PICKUP_AREA",
+        target_id=str(area.id),
+        ip_address=request.client.host if request.client else None,
+        details={"area": area.name, "changes": changes},
+    )
+    db.commit()
+    db.refresh(area)
+    return area

@@ -17,10 +17,10 @@ export default function NotFoundPage() {
           </p>
           <div style={{ display: 'inline-flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Link className="primary" to="/listings">
-              Browse items
+              Browse listings
             </Link>
             <Link className="outline" to="/needs">
-              See requests
+              See needs
             </Link>
             <Link className="outline" to="/">
               Back to Home

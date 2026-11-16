@@ -15,7 +15,7 @@ function loadGoogleScript() {
     script.onload = () => resolve();
     script.onerror = () => {
       scriptPromise = undefined; // allow a retry on the next mount
-      reject(new Error('Could not load Google sign-in.'));
+      reject(new Error('Google sign-in unavailable.'));
     };
     document.head.appendChild(script);
   });

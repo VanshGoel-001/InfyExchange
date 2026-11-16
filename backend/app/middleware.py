@@ -39,6 +39,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             else uuid.uuid4().hex
         )
 
+        # Also on the request, because a crash is answered outside this middleware, where the context variable is gone.
+        request.state.request_id = request_id
         token = request_id_var.set(request_id)
 
         try:

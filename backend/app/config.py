@@ -22,15 +22,22 @@ class Settings(BaseSettings):
     listing_expiry_days: int = 30
     max_images_per_listing: int = 5
     max_image_size_mb: int = 5
+    # Uploads are shrunk to max_image_width and rejected below min_image_width (pixels).
+    min_image_width: int = 600
+    max_image_width: int = 1200
 
     duplicate_submission_window_seconds: int = 60
+
+    # Notifications disappear this many days after they are created.
+    notification_expiry_days: int = 30
 
     # PostgreSQL Connection Pooling Config
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_recycle: int = 1800  # Recycle connections every 30 mins (below PG idle timeout)
 
-    cors_origins: str = "http://localhost:4200"
+    # No built-in origin: production must name the site that may call the API (see validate_runtime_settings).
+    cors_origins: str = ""
     allowed_email_domains: str = "gmail.com"
 
     # OAuth client ID (public, not a secret) of the Google Sign-In web client.
@@ -100,6 +107,27 @@ class Settings(BaseSettings):
             for domain in self.allowed_email_domains.split(",")
             if domain.strip()
         ]
+
+
+def validate_runtime_settings(current: Settings) -> list[str]:
+    """What is missing or wrong for a real deployment, as plain sentences naming the setting (never its value)."""
+    problems: list[str] = []
+
+    if not current.secret_key.strip():
+        problems.append("SECRET_KEY is empty")
+    if not current.database_url.strip():
+        problems.append("DATABASE_URL is empty")
+    if not current.cors_origin_list:
+        problems.append("CORS_ORIGINS is empty: name the site that may call the API")
+    for name in ("cloudinary_cloud_name", "cloudinary_api_key", "cloudinary_api_secret"):
+        if not getattr(current, name).strip():
+            problems.append(f"{name.upper()} is empty")
+    if current.email_provider == "brevo":
+        for name in ("email_api_key", "sender_email", "admin_email"):
+            if not getattr(current, name).strip():
+                problems.append(f"{name.upper()} is empty but EMAIL_PROVIDER is brevo")
+
+    return problems
 
 
 settings = Settings()

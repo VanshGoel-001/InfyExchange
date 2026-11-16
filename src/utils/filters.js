@@ -3,7 +3,7 @@
 // enum fields match exactly, search/location are case-insensitive
 // substrings, and price bounds are numeric comparisons.
 
-const EXACT_KEYS = new Set(['category', 'listing_type', 'condition', 'need_type']);
+const EXACT_KEYS = new Set(['category', 'listing_type', 'condition', 'need_type', 'pickup_area_id', 'block_no']);
 
 function matchesFilter(item, key, value) {
   const needle = String(value).toLowerCase();

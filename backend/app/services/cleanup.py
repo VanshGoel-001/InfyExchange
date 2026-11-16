@@ -2,12 +2,13 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.database import SessionLocal
 from app.models.failed_email import FailedEmail
 from app.models.listing import Listing
 from app.models.need import Need
+from app.models.notification import Notification
 from app.services.cloudinary import delete_image
 from app.utils.enums import ListingStatus
 
@@ -68,12 +69,18 @@ def cleanup_expired_data():
         for failed_email in stale_emails:
             db.delete(failed_email)
 
+        # Expired notifications are already hidden from every query; this just frees the rows.
+        expired_notifications = db.execute(
+            delete(Notification).where(Notification.expires_at <= now)
+        ).rowcount
+
         db.commit()
 
         logger.info(
-            "Cleanup deleted %d listing(s) and %d need(s).",
+            "Cleanup deleted %d listing(s), %d need(s) and %d notification(s).",
             len(expired_listings),
             len(expired_needs),
+            expired_notifications,
         )
 
     finally:

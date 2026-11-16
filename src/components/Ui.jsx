@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Check, CircleCheck, Eye, EyeOff, Plus, X } from 'lucide-react';
+import { InlineError } from './Section';
 
 const BANNER_ART = { need: '💭 🏸 🏓', activity: '📋 🤝 💬', sports: '🏸 ⚽ 🏓' };
 
@@ -66,7 +67,10 @@ export function PasswordInput({ autoComplete, ...props }) {
   );
 }
 
-export function FormError({ children }) {
+// What went wrong with a submit. `failure` ({ text, action }) is a failed request: one line and a Retry next to the
+// button. Plain children are a problem with what was typed, which the person fixes themselves.
+export function FormError({ children, failure, onRetry }) {
+  if (failure) return <InlineError text={failure.text} action={failure.action} onRetry={onRetry} />;
   return children ? <p role="alert" className="error">{children}</p> : null;
 }
 
@@ -132,7 +136,7 @@ const NEED_TIPS = [
 export function TipBox({ listing = false }) {
   return (
     <div className="tipbox">
-      <h3>{listing ? 'Tips for a good listing' : 'Tips for a good request'}</h3>
+      <h3>{listing ? 'Tips for a good listing' : 'Tips for a good need'}</h3>
       {(listing ? LISTING_TIPS : NEED_TIPS).map((tip) => (
         <p key={tip}>
           <Check aria-hidden="true" /> {tip}

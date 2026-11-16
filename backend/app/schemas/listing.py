@@ -22,6 +22,9 @@ class ListingResponse(BaseModel):
     price_unit: str | None
     condition: ItemCondition
     location: str
+    pickup_area_id: int | None = None
+    pickup_area: str | None = None
+    block_no: int | None = None
     description: str
     status: ListingStatus
     created_at: datetime

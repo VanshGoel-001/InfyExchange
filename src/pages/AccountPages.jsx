@@ -3,7 +3,10 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, Inbox, Megaphone, Package, Pencil, Send } from 'lucide-react';
 import { AppShell } from '../components/Layout';
 import { Banner, Field, Flash, FormError, Pill } from '../components/Ui';
-import { api } from '../services/api';
+import { api, safe, toFailure } from '../services/api';
+import { InlineError, SectionBoundary } from '../components/Section';
+import { useLoad } from '../hooks/useLoad';
+import { failureCopy } from '../utils/messages';
 import { useAuth } from '../context/AuthContext';
 import { useForm } from '../hooks/useForm';
 import { NeedCard, ProductCard } from '../components/Cards';
@@ -47,7 +50,7 @@ function EditProfileForm({ user, token, onDone }) {
       <Field label="Date you joined Infosys" required error={error('joining_date')}>
         <input {...bind('joining_date')} type="date" max={todayISO()} />
       </Field>
-      <FormError>{form.formError}</FormError>
+      <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
       <div className="button-row">
         <button className="primary" disabled={form.busy} aria-busy={form.busy}>{form.busy ? 'Saving…' : 'Save changes'}</button>
         <button type="button" className="outline" onClick={() => onDone('')} disabled={form.busy}>Cancel</button>
@@ -58,19 +61,14 @@ function EditProfileForm({ user, token, onDone }) {
 
 export function ProfilePage() {
   const { token, user } = useAuth();
-  const [summary, setSummary] = useState(null);
-  const [error, setError] = useState('');
+  const summaryLoad = useLoad(() => api.summary(token), [token]);
+  const summary = summaryLoad.data;
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState('');
 
-  useEffect(() => {
-    if (!token) return;
-    api.summary(token).then(setSummary).catch((e) => setError(e.message));
-  }, [token]);
-
   const stats = [
-    [Package, summary?.my_listings_count, 'Items I posted', '/my-listings'],
-    [Megaphone, summary?.my_needs_count, 'Requests I posted', '/my-needs'],
+    [Package, summary?.my_listings_count, 'Listings I posted', '/my-listings'],
+    [Megaphone, summary?.my_needs_count, 'Needs I posted', '/my-needs'],
     [Send, summary?.my_interests_count, 'Enquiries I sent', '/activity'],
     [Inbox, summary?.requests_received_count, 'Enquiries I received', '/activity', summary?.pending_requests_received_count],
   ];
@@ -141,13 +139,13 @@ export function ProfilePage() {
                 </Link>
               ))}
             </div>
-            {error && <p className="error">{error}</p>}
+            {summaryLoad.status === 'failed' && !summary && <InlineError error={summaryLoad.error} context="stat" onRetry={summaryLoad.reload} />}
           </div>
 
           <div className="panel quick">
             <h2>Quick actions</h2>
-            <Link className="outline" to="/listings/new">Post an item</Link>
-            <Link className="outline" to="/needs/new">Post a request</Link>
+            <Link className="outline" to="/listings/new">Post a listing</Link>
+            <Link className="outline" to="/needs/new">Post a need</Link>
             <Link className="outline" to="/activity">Enquiries</Link>
           </div>
         </section>
@@ -158,18 +156,25 @@ export function ProfilePage() {
 
 export function ActivityPage() {
   const { token } = useAuth();
-  const [data, setData] = useState({ sent: [], received: [] });
+  // null until both lists have really arrived.
+  const [data, setData] = useState(null);
+  const [failure, setFailure] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    Promise.all([api.sent(token), api.received(token)])
-      .then(([sent, received]) => setData({ sent, received }))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    const [sent, received] = await Promise.all([safe(api.sent(token)), safe(api.received(token))]);
+    setLoading(false);
+    if (sent.aborted || received.aborted) return;
+    if (!sent.ok || !received.ok) {
+      setFailure((sent.ok ? received : sent).error);
+      return;
+    }
+    setFailure(null);
+    setData({ sent: sent.data, received: received.data });
   };
 
   useEffect(() => {
@@ -192,7 +197,7 @@ export function ActivityPage() {
       setNotice(action === 'accept' ? 'Enquiry accepted. You can chat now.' : 'Enquiry declined.');
       load();
     } catch (e) {
-      setError(e.message);
+      setError(failureCopy(toFailure(e), 'generic').text);
     } finally {
       setBusy(null);
     }
@@ -202,15 +207,20 @@ export function ActivityPage() {
     <AppShell>
       <Banner
         title="Enquiries"
-        subtitle="People who asked about your items, and the items you asked about."
+        subtitle="People who asked about your listings, and the listings you asked about."
         kind="activity"
       />
       {error && <p role="alert" className="error">{error}</p>}
       {notice && <p role="status" className="flash">{notice}</p>}
+      {failure && <InlineError error={failure} context="generic" onRetry={load} />}
 
       <div className="lower-tables">
-        <Requests items={data.received} loading={loading} onRespond={respond} busy={busy} token={token} />
-        <SentRequests items={data.sent} loading={loading} token={token} />
+        <SectionBoundary name="received enquiries" context="generic">
+          <Requests items={data ? data.received : null} loading={loading} onRespond={respond} busy={busy} token={token} />
+        </SectionBoundary>
+        <SectionBoundary name="sent enquiries" context="generic">
+          <SentRequests items={data ? data.sent : null} loading={loading} token={token} />
+        </SectionBoundary>
       </div>
     </AppShell>
   );
@@ -218,7 +228,9 @@ export function ActivityPage() {
 
 export function MyListingsPage() {
   const { token } = useAuth();
-  const [items, setItems] = useState([]);
+  // null until the list has really arrived; an empty list is a real answer, a failure is not.
+  const [items, setItems] = useState(null);
+  const [failure, setFailure] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState(null);
@@ -226,13 +238,17 @@ export function MyListingsPage() {
   const [loading, setLoading] = useState(true);
 
   // Returns the promise so a caller can show its notice only once the list is up to date.
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    return api
-      .myListings(token)
-      .then(setItems)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    const result = await safe(api.myListings(token));
+    setLoading(false);
+    if (result.aborted) return;
+    if (result.ok) {
+      setItems(result.data);
+      setFailure(null);
+    } else {
+      setFailure(result.error);
+    }
   };
 
   useEffect(() => {
@@ -248,7 +264,7 @@ export function MyListingsPage() {
       await api.deleteListing(item.id, token);
       load();
     } catch (e) {
-      setError(e.message);
+      setError(failureCopy(toFailure(e), 'generic').text);
     } finally {
       setBusy(null);
     }
@@ -264,7 +280,7 @@ export function MyListingsPage() {
       await load();
       setNotice(`“${item.title}” is available again.`);
     } catch (e) {
-      setError(e.message);
+      setError(failureCopy(toFailure(e), 'generic').text);
     } finally {
       setBusy(null);
     }
@@ -272,22 +288,23 @@ export function MyListingsPage() {
 
   return (
     <AppShell>
-      <Banner title="My items" subtitle="Everything you have posted for the community." />
+      <Banner title="My listings" subtitle="Everything you have posted for the community." />
       <Flash />
       <div className="personal-page-head">
-        <p>{loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'item' : 'items'}`}</p>
-        <Link className="primary" to="/listings/new">Post an item</Link>
+        <p>{items ? `${items.length} ${items.length === 1 ? 'listing' : 'listings'}` : loading ? 'Loading…' : '—'}</p>
+        <Link className="primary" to="/listings/new">Post a listing</Link>
       </div>
       {error && <p role="alert" className="error">{error}</p>}
+      {failure && <InlineError error={failure} context="generic" onRetry={load} />}
       {notice && <p role="status" className="flash">{notice}</p>}
 
-      {loading ? (
+      {items === null && loading ? (
         <div className="my-items-grid">
           {[...Array(3)].map((_, i) => (
             <SkeletonCard key={i} />
           ))}
         </div>
-      ) : (
+      ) : items && (
         <section className="my-items-grid">
           {items.map((item, index) => (
             <article className="my-item" key={item.id}>
@@ -324,11 +341,11 @@ export function MyListingsPage() {
         </section>
       )}
 
-      {!loading && !items.length && !error && (
+      {items && !loading && !items.length && !failure && (
         <section className="panel empty-state">
           <h2>You have not posted anything yet</h2>
-          <p>Post an item and other trainees can find it.</p>
-          <Link className="primary" to="/listings/new">Post an item</Link>
+          <p>Post a listing and other trainees can find it.</p>
+          <Link className="primary" to="/listings/new">Post a listing</Link>
         </section>
       )}
     </AppShell>
@@ -350,7 +367,7 @@ function PriceEditor({ item, token, onDone }) {
       <Field label="New price (₹)" error={form.error('price')} hint="People already chatting with you will be told.">
         <input {...form.bind('price')} inputMode="numeric" />
       </Field>
-      <FormError>{form.formError}</FormError>
+      <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
       <div className="button-row">
         <button className="primary compact" disabled={form.busy}>{form.busy ? 'Saving…' : 'Save price'}</button>
         <button type="button" className="outline compact" onClick={() => onDone('')} disabled={form.busy}>Cancel</button>
@@ -361,43 +378,33 @@ function PriceEditor({ item, token, onDone }) {
 
 export function MyNeedsPage() {
   const { token } = useAuth();
-  const [items, setItems] = useState([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!token) return;
-    setLoading(true);
-    api
-      .myNeeds(token)
-      .then(setItems)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [token]);
+  const needsLoad = useLoad(() => api.myNeeds(token), [token]);
+  const items = needsLoad.data;
+  const loading = needsLoad.status === 'loading';
 
   return (
     <AppShell>
-      <Banner title="My requests" subtitle="Things you have asked the community for." kind="need" />
+      <Banner title="My needs" subtitle="Things you have asked the community for." kind="need" />
       <Flash />
       <div className="personal-page-head">
-        <p>{loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'request' : 'requests'}`}</p>
-        <Link className="primary" to="/needs/new">Post a request</Link>
+        <p>{items ? `${items.length} ${items.length === 1 ? 'need' : 'needs'}` : loading ? 'Loading…' : '—'}</p>
+        <Link className="primary" to="/needs/new">Post a need</Link>
       </div>
-      {error && <p role="alert" className="error">{error}</p>}
+      {needsLoad.status === 'failed' && <InlineError error={needsLoad.error} context="needs" onRetry={needsLoad.reload} />}
 
       <section className="my-items-grid my-needs-grid">
-        {items.map((item, index) => (
+        {items?.map((item, index) => (
           <article className="my-item" key={item.id}>
             <NeedCard item={item} i={index} />
           </article>
         ))}
       </section>
 
-      {!loading && !items.length && !error && (
+      {items && !items.length && (
         <section className="panel empty-state">
           <h2>You have not asked for anything yet</h2>
-          <p>Post a request and let the community know what you are looking for.</p>
-          <Link className="primary" to="/needs/new">Post a request</Link>
+          <p>Post a need and let the community know what you are looking for.</p>
+          <Link className="primary" to="/needs/new">Post a need</Link>
         </section>
       )}
     </AppShell>
@@ -408,9 +415,9 @@ function Requests({ items, loading, onRespond, busy, token }) {
   return (
     <section className="panel request-panel">
       <h2>
-        Enquiries about my items <small>({items.length})</small>
+        Enquiries about my listings <small>({items ? items.length : '—'})</small>
       </h2>
-      {items.map((item) => (
+      {items?.map((item) => (
         <div className="request" key={item.id}>
           <div className="request-main">
             <b>{item.interested_user_name}{item.interested_user_role && <small> · {labelOf(ROLES, item.interested_user_role)}</small>}</b>
@@ -433,7 +440,7 @@ function Requests({ items, loading, onRespond, busy, token }) {
           </div>
         </div>
       ))}
-      {!loading && !items.length && <p className="empty">No one has enquired about your items yet.</p>}
+      {items && !loading && !items.length && <p className="empty">No one has enquired about your listings yet.</p>}
     </section>
   );
 }
@@ -442,9 +449,9 @@ function SentRequests({ items, loading, token }) {
   return (
     <section className="panel request-panel">
       <h2>
-        Items I asked about <small>({items.length})</small>
+        Listings I asked about <small>({items ? items.length : '—'})</small>
       </h2>
-      {items.map((item) => (
+      {items?.map((item) => (
         <div className="request" key={item.id}>
           <div className="request-main">
             <b>
@@ -461,9 +468,9 @@ function SentRequests({ items, loading, token }) {
           </div>
         </div>
       ))}
-      {!loading && !items.length && (
+      {items && !loading && !items.length && (
         <p className="empty">
-          You have not enquired about any items yet. <Link to="/listings">Browse items</Link>
+          You have not enquired about any listings yet. <Link to="/listings">Browse listings</Link>
         </p>
       )}
     </section>
@@ -537,7 +544,7 @@ export function ContactReveal({ interestId, token }) {
       setContact(await api.contact(interestId, token));
       setState('revealed');
     } catch (e) {
-      setError(e.message || 'Could not load contact details.');
+      setError(failureCopy(toFailure(e), 'generic').text);
       setState('error');
     }
   };

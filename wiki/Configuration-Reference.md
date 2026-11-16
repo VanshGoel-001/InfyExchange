@@ -31,7 +31,9 @@ The process fails at import if any of these is missing.
 | `APP_NAME` | `InfyExchange` | FastAPI title |
 | `ALGORITHM` | `HS256` | JWT algorithm (also the only one accepted on decode) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 10080 | 7 days |
-| `CORS_ORIGINS` | `http://localhost:4200` | Comma-separated **exact** origins; never `*`. Set to the Pages origin in production. (Vite dev runs on 5173 but proxies, so CORS is not used locally) |
+| `CORS_ORIGINS` | none (empty) | Comma-separated **exact** origins; never `*`. **Required in production**: the app refuses to start without it. (Vite dev runs on 5173 but proxies, so CORS is not used locally) |
+
+**Startup check:** in `ENVIRONMENT=production` the API refuses to start, and logs which setting is missing (never its value), if `SECRET_KEY`, `DATABASE_URL`, `CORS_ORIGINS` or the `CLOUDINARY_*` values are empty, or if `EMAIL_PROVIDER=brevo` is set without `EMAIL_API_KEY`, `SENDER_EMAIL` and `ADMIN_EMAIL`. Outside production the same problems are only logged.
 | `ALLOWED_EMAIL_DOMAINS` | `gmail.com` | Comma-separated; empty falls back to `gmail.com` |
 | `GOOGLE_CLIENT_ID` | empty | OAuth client ID of the Google Sign-In web client (public, not a secret). Empty switches "Sign in with Google" off (`POST /auth/google` answers `503`). Set by hand on the Cloud Run service; the deploy workflow does not touch it |
 | `ALLOWED_HOSTS` | empty | If non-empty, enables `TrustedHostMiddleware` with this comma-separated list |
@@ -41,8 +43,11 @@ The process fails at import if any of these is missing.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `LISTING_EXPIRY_DAYS` | 30 | Used for both listings and needs |
+| `NOTIFICATION_EXPIRY_DAYS` | 30 | A notification stops showing this many days after it is created; the daily cleanup deletes it |
 | `MAX_IMAGES_PER_LISTING` | 5 | Mirror in `PostingPage.jsx` |
 | `MAX_IMAGE_SIZE_MB` | 5 | Mirror in `PostingPage.jsx` |
+| `MIN_IMAGE_WIDTH` | 600 | Narrower photos are rejected; mirror in `validate.js` (`imageMinWidth`) |
+| `MAX_IMAGE_WIDTH` | 1200 | Larger photos are shrunk to this width on upload |
 | `DUPLICATE_SUBMISSION_WINDOW_SECONDS` | 60 | Idempotency window for creating listings/needs |
 
 ### Email

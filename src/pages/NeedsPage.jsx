@@ -3,9 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Header } from '../components/Layout';
 import { Banner } from '../components/Ui';
 import { NeedCard } from '../components/Cards';
+import { InlineError, SectionBoundary } from '../components/Section';
 import { SkeletonCard } from '../components/ErrorBoundary';
 import { useAuth } from '../context/AuthContext';
-import { api } from '../services/api';
+import { api, safe } from '../services/api';
 import { applyClientFilters } from '../utils/filters';
 import { CATEGORIES, NEED_TYPES } from '../utils/labels';
 
@@ -16,10 +17,11 @@ export default function NeedsPage() {
   const navigate = useNavigate();
   const { token, user, loading: authLoading } = useAuth();
   const mine = params.get('scope') === 'mine';
-  const [items, setItems] = useState([]);
+  // null until the first real answer: an empty list is a real answer, a failed request is not.
+  const [items, setItems] = useState(null);
   const [filters, setFilters] = useState(emptyFilters);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [failure, setFailure] = useState(null);
   const [applied, setApplied] = useState(false);
 
   // Only the newest request may update the screen: a slow answer to an earlier search must not overwrite it.
@@ -28,21 +30,18 @@ export default function NeedsPage() {
   const load = async (nextFilters = filters) => {
     const ticket = ++latest.current;
     setLoading(true);
-    try {
-      setError('');
-      const query = Object.fromEntries(Object.entries(nextFilters).filter(([, value]) => value));
-      const data = mine ? await api.myNeeds(token) : await api.needs({ limit: 100, ...query });
-      const filtered = mine && Object.keys(query).length ? applyClientFilters(data, query) : data;
-      if (ticket !== latest.current) return;
-      setItems(filtered);
-      setApplied(Object.keys(query).length > 0);
-    } catch (requestError) {
-      if (ticket !== latest.current) return;
-      setItems([]);
-      setError(requestError.message);
-    } finally {
-      if (ticket === latest.current) setLoading(false);
+    const query = Object.fromEntries(Object.entries(nextFilters).filter(([, value]) => value));
+    const result = await safe(mine ? api.myNeeds(token) : api.needs({ limit: 100, ...query }));
+    if (ticket !== latest.current || result.aborted) return;
+    setLoading(false);
+    if (!result.ok) {
+      // Keep whatever was on screen and say so in one line; never turn a failure into "no needs".
+      setFailure(result.error);
+      return;
     }
+    setFailure(null);
+    setItems(mine && Object.keys(query).length ? applyClientFilters(result.data, query) : result.data);
+    setApplied(Object.keys(query).length > 0);
   };
 
   useEffect(() => {
@@ -69,23 +68,23 @@ export default function NeedsPage() {
       <Header />
       <main className="wide catalogue-page">
         <Banner
-          title={mine ? 'My requests' : 'Community requests'}
+          title={mine ? 'My needs' : 'Community needs'}
           subtitle={
             mine
               ? 'Things you have asked the community for.'
               : 'See what other trainees are looking for. Have one to spare? Post it as an item.'
           }
           kind="need"
-          action={mine ? 'See all requests' : 'Post a request'}
+          action={mine ? 'See all needs' : 'Post a need'}
           to={mine ? '/needs' : '/needs/new'}
         />
 
         <form className="need-filters" onSubmit={apply}>
           <input
-            aria-label="Search requests"
+            aria-label="Search needs"
             value={filters.search}
             onChange={(event) => setField('search', event.target.value)}
-            placeholder="Search requests"
+            placeholder="Search needs"
           />
           <select aria-label="Category" value={filters.category} onChange={(event) => setField('category', event.target.value)}>
             <option value="">All categories</option>
@@ -112,43 +111,47 @@ export default function NeedsPage() {
 
         {mine && (
           <p className="scope-note">
-            Showing only your requests. <Link to="/needs">See everyone’s requests</Link>
+            Showing only your needs. <Link to="/needs">See everyone’s needs</Link>
           </p>
         )}
 
         <div className="needs-body">
           <section>
             <h2>
-              {loading ? 'Loading…' : `${items.length} ${items.length === 1 ? 'request' : 'requests'}${applied ? ' match your filters' : ''}`}
+              {items === null ? (loading ? 'Loading…' : 'Needs') : `${items.length} ${items.length === 1 ? 'need' : 'needs'}${applied ? ' match your filters' : ''}`}
             </h2>
 
-            {loading ? (
-              <div className="grid needs-grid">
-                {[...Array(6)].map((_, i) => (
-                  <SkeletonCard key={i} />
-                ))}
-              </div>
-            ) : (
-              <div className="grid needs-grid">
-                {items.map((item, index) => (
-                  <NeedCard item={item} i={index} key={item.id} />
-                ))}
-              </div>
-            )}
+            <SectionBoundary name="needs list" context="needs">
+              {failure && <InlineError error={failure} context={filters.search ? 'search' : 'needs'} onRetry={() => load(filters)} />}
 
-            {!loading && !items.length && (
+              {items === null && loading && (
+                <div className="grid needs-grid">
+                  {[...Array(6)].map((_, i) => (
+                    <SkeletonCard key={i} />
+                  ))}
+                </div>
+              )}
+
+              {items !== null && (
+                <div className="grid needs-grid">
+                  {items.map((item, index) => (
+                    <NeedCard item={item} i={index} key={item.id} />
+                  ))}
+                </div>
+              )}
+            </SectionBoundary>
+
+            {items !== null && !loading && !items.length && !failure && (
               <div className="empty-block">
-                {error ? (
-                  <p role="alert" className="error">{error}</p>
-                ) : applied ? (
+                {applied ? (
                   <>
                     <p>Nothing matches those filters.</p>
                     <button type="button" className="outline" onClick={clear}>Clear filters</button>
                   </>
                 ) : (
                   <>
-                    <p>{mine ? 'You have not posted any requests yet.' : 'No one has asked for anything yet.'}</p>
-                    <Link className="primary" to="/needs/new">Post a request</Link>
+                    <p>{mine ? 'You have not posted any needs yet.' : 'No one has asked for anything yet.'}</p>
+                    <Link className="primary" to="/needs/new">Post a need</Link>
                   </>
                 )}
               </div>
@@ -157,11 +160,11 @@ export default function NeedsPage() {
 
           <aside className="help-aside">
             <div className="tips">
-              <h3>How requests work</h3>
+              <h3>How needs work</h3>
               <p>A request tells everyone what you are looking for.</p>
-              <p>Trainees who have it can post it as an item, and you will find it under Browse items.</p>
+              <p>Trainees who have it can post it as a listing, and you will find it under Browse listings.</p>
               <p>
-                Got something someone asked for? <Link to="/listings/new">Post it as an item</Link>.
+                Got something someone asked for? <Link to="/listings/new">Post it as a listing</Link>.
               </p>
             </div>
           </aside>

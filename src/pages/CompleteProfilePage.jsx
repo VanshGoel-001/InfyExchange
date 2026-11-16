@@ -34,12 +34,12 @@ export default function CompleteProfilePage() {
       <main className="wide">
         <Banner
           title={`Welcome, ${user.name.split(' ')[0]}!`}
-          subtitle="One last step before you can post items or reply to listings."
+          subtitle="One last step before you can post listings or send enquiries."
         />
         <form className="form-card narrow" onSubmit={submit} noValidate>
           <h2>A few details about you</h2>
           <p className="form-lead">
-            You signed in as <b>{user.email}</b>. Other trainees only see your phone number after you accept their request.
+            You signed in as <b>{user.email}</b>. Other trainees only see your phone number after you accept their enquiry.
           </p>
 
           <Field label="Phone number" error={error('phone')}>
@@ -59,7 +59,7 @@ export default function CompleteProfilePage() {
             <input {...bind('joining_date')} type="date" max={todayISO()} />
           </Field>
 
-          <FormError>{form.formError}</FormError>
+          <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
 
           <button className="primary submit" disabled={form.busy} aria-busy={form.busy}>
             {form.busy ? 'Saving…' : 'Save and continue'}

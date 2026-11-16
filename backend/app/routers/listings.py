@@ -26,6 +26,7 @@ from app.dependencies import get_complete_user, get_current_user
 from app.models.interest import Interest
 from app.models.listing import Listing
 from app.models.listing_image import ListingImage
+from app.models.pickup_area import PickupArea
 from app.models.user import User
 from app.schemas.listing import (
     ListingDetailResponse,
@@ -37,6 +38,7 @@ from app.services.cloudinary import (
     upload_image,
 )
 from app.services.notify import notify, short
+from app.utils.money import format_rupees
 from app.services.rate_limit import (
     action_limiter,
     client_key,
@@ -83,6 +85,13 @@ def _serialize_listing(listing: Listing) -> dict:
         "price_unit": listing.price_unit,
         "condition": listing.condition,
         "location": listing.location,
+        "pickup_area_id": listing.pickup_area_id,
+        "pickup_area": (
+            listing.pickup_area.name
+            if listing.pickup_area is not None
+            else None
+        ),
+        "block_no": listing.block_no,
         "description": listing.description,
         "status": listing.status,
         "created_at": listing.created_at,
@@ -124,7 +133,8 @@ async def create_listing(
     price: int = Form(0, ge=0, le=10_000_000),
     price_unit: str | None = Form(None, max_length=30),
     condition: ItemCondition = Form(...),
-    location: str = Form(..., min_length=2, max_length=100),
+    pickup_area_id: int = Form(...),
+    block_no: int | None = Form(None, ge=1, le=100),
     description: str = Form(..., min_length=2, max_length=2000),
     images: Annotated[
         list[UploadFile],
@@ -142,15 +152,13 @@ async def create_listing(
     )
 
     # The length limits above count spaces, so "   " would pass and be saved as nothing.
-    title, location, description = (
+    title, description = (
         title.strip(),
-        location.strip(),
         description.strip(),
     )
 
     for field, value in (
         ("title", title),
-        ("location", location),
         ("description", description),
     ):
         if len(value) < 2:
@@ -158,6 +166,22 @@ async def create_listing(
                 status_code=422,
                 detail=f"{field}: needs at least 2 characters, not counting spaces",
             )
+
+    area = db.get(PickupArea, pickup_area_id)
+
+    if area is None or not area.is_active:
+        raise HTTPException(
+            status_code=422,
+            detail="Choose a pickup area from the list",
+        )
+
+    if block_no is not None and not area.has_blocks:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{area.name} has no block numbers",
+        )
+
+    location = f"{area.name} - {block_no}" if block_no else area.name
 
     if len(images) > settings.max_images_per_listing:
         raise HTTPException(
@@ -197,7 +221,8 @@ async def create_listing(
             Listing.title == title.strip(),
             Listing.listing_type == listing_type,
             Listing.price == price,
-            Listing.location == location.strip(),
+            Listing.pickup_area_id == area.id,
+            Listing.block_no == block_no,
             Listing.description == description.strip(),
             Listing.created_at
             > datetime.utcnow()
@@ -222,7 +247,9 @@ async def create_listing(
         price=price,
         price_unit=price_unit,
         condition=condition,
-        location=location.strip(),
+        location=location,
+        pickup_area_id=area.id,
+        block_no=block_no,
         description=description.strip(),
         status=ListingStatus.ACTIVE,
         created_at=now,
@@ -275,7 +302,12 @@ async def create_listing(
 
         raise HTTPException(
             status_code=400,
-            detail="Failed to upload images. Please try again.",
+            # ValueError messages come from our own checks (type, size, dimensions) and are user-safe.
+            detail=(
+                str(exc)
+                if isinstance(exc, ValueError)
+                else "Failed to upload images. Please try again."
+            ),
         )
 
     db.refresh(listing)
@@ -296,6 +328,8 @@ def get_listings(
     category: ListingCategory | None = Query(None),
     listing_type: ListingType | None = Query(None),
     location: str | None = Query(None),
+    pickup_area_id: int | None = Query(None),
+    block_no: int | None = Query(None, ge=1, le=100),
     condition: ItemCondition | None = Query(None),
     min_price: int | None = Query(None, ge=0),
     max_price: int | None = Query(None, ge=0),
@@ -335,6 +369,16 @@ def get_listings(
     if location:
         query = query.where(
             Listing.location.ilike(f"%{location}%")
+        )
+
+    if pickup_area_id is not None:
+        query = query.where(
+            Listing.pickup_area_id == pickup_area_id
+        )
+
+    if block_no is not None:
+        query = query.where(
+            Listing.block_no == block_no
         )
 
     if condition:
@@ -496,8 +540,11 @@ def update_listing(
                 interest.interested_user_id,
                 "price_changed",
                 f"The price of \"{short(listing.title)}\" changed from "
-                f"Rs {old_price}{unit} to Rs {data.price}{unit}.",
+                f"{format_rupees(old_price)}{unit} to {format_rupees(data.price)}{unit}.",
                 interest.id,
+                actor_id=current_user.id,
+                listing_title=listing.title,
+                detail=f"{format_rupees(old_price)}{unit} to {format_rupees(data.price)}{unit}",
             )
 
         db.commit()
@@ -563,6 +610,8 @@ def mark_returned(
             "item_returned",
             f"\"{short(listing.title)}\" was marked as returned. Thank you!",
             borrower_deal.id,
+            actor_id=current_user.id,
+            listing_title=listing.title,
         )
 
     listing.status = ListingStatus.ACTIVE
@@ -627,6 +676,8 @@ def delete_listing(
             interest.interested_user_id,
             "listing_removed",
             f"\"{short(listing.title)}\" was removed by the seller.",
+            actor_id=current_user.id,
+            listing_title=listing.title,
         )
 
     for image in listing.images:

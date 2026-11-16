@@ -74,7 +74,8 @@ async def upload_image(
     _validate_image_magic_bytes(content)
 
     file_stream = io.BytesIO(content)
-    file_stream.name = file.filename or "image.jpg"
+    # Never the user's filename: Cloudinary then names the stored file with a random id.
+    file_stream.name = "image"
 
     # Execute synchronous Cloudinary network call in a worker thread so event loop is not blocked
     result = await asyncio.to_thread(
@@ -82,7 +83,26 @@ async def upload_image(
         file_stream,
         folder=f"infyexchange/listings/{listing_id}",
         resource_type="image",
+        use_filename=False,
+        unique_filename=True,
+        # Applied before the file is stored, so the saved original is already small, WebP and
+        # free of EXIF/location metadata (strip_profile). "limit" never enlarges a small image.
+        format="webp",
+        transformation=[
+            {
+                "width": settings.max_image_width,
+                "crop": "limit",
+                "flags": "strip_profile",
+            }
+        ],
     )
+
+    # Cloudinary reports the stored size, so a too-small image is caught here and removed again.
+    if result.get("width", 0) < settings.min_image_width:
+        await asyncio.to_thread(delete_image, result["public_id"])
+        raise ValueError(
+            f"Image is too small. Use a photo at least {settings.min_image_width} pixels wide."
+        )
 
     return {
         "public_id": result["public_id"],

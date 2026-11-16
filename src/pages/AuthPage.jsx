@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Header, Footer } from '../components/Layout';
 import { Field, FormError, PasswordInput } from '../components/Ui';
 import GoogleButton, { GOOGLE_CLIENT_ID } from '../components/GoogleButton';
 import { useAuth } from '../context/AuthContext';
 import { useForm } from '../hooks/useForm';
-import { api } from '../services/api';
+import { api, toFailure } from '../services/api';
+import { failureCopy } from '../utils/messages';
 import { ROLES } from '../utils/labels';
+import { SESSION_MESSAGE } from '../utils/messages';
+import { safeNext } from '../utils/redirect';
 import { LIMITS, normalizePhone, todayISO, validateLogin, validateRegister } from '../utils/validate';
 
 const REGISTER_FIELDS = ['name', 'email', 'phone', 'password', 'confirm', 'role', 'joining_date'];
@@ -14,7 +17,20 @@ const REGISTER_FIELDS = ['name', 'email', 'phone', 'password', 'confirm', 'role'
 export default function AuthPage({ register = false }) {
   const navigate = useNavigate();
   const { login, loginWithGoogle } = useAuth();
+  const [params] = useSearchParams();
+  // After logging in, go back to the page that sent the person here (only ever a path on this site).
+  const next = safeNext(params.get('next'));
   const [googleBusy, setGoogleBusy] = useState(false);
+  // Set when a logged-in session ran out; shown once.
+  const [expired] = useState(() => {
+    try {
+      const flag = sessionStorage.getItem('infy_expired');
+      sessionStorage.removeItem('infy_expired');
+      return Boolean(flag);
+    } catch {
+      return false;
+    }
+  });
 
   const form = useForm(
     { name: '', email: '', phone: '', password: '', confirm: '', role: '', joining_date: '' },
@@ -38,7 +54,7 @@ export default function AuthPage({ register = false }) {
     }
     await login({ email, password: values.password });
     // The welcome email often lands in spam, so say where to look.
-    navigate('/listings', register ? { state: { toast: { title: 'Account created', message: "We've sent a welcome email to your inbox. If you don't see it, please check your spam or junk folder." } } } : undefined);
+    navigate(next, register ? { state: { toast: { title: 'Account created', message: "We've sent a welcome email to your inbox. If you don't see it, please check your spam or junk folder." } } } : undefined);
   });
 
   const continueWithGoogle = async (credential) => {
@@ -49,10 +65,10 @@ export default function AuthPage({ register = false }) {
       const first = profile.name.split(' ')[0];
       const toast = profile.profile_complete
         ? { title: 'Signed in', message: `Welcome back, ${first}.` }
-        : { title: `Welcome, ${first}`, message: "You're signed in with Google. Add a few details to start posting items and sending enquiries." };
-      navigate(profile.profile_complete ? '/listings' : '/complete-profile', { state: { toast } });
+        : { title: `Welcome, ${first}`, message: "You're signed in with Google. Add a few details to start posting listings and sending enquiries." };
+      navigate(profile.profile_complete ? next : '/complete-profile', { state: { toast } });
     } catch (err) {
-      form.setFormError(err.message);
+      form.setFormError(failureCopy(toFailure(err), 'generic').text);
     } finally {
       setGoogleBusy(false);
     }
@@ -66,7 +82,8 @@ export default function AuthPage({ register = false }) {
       <div className="auth">
         <section>
           <h1>{register ? 'Join InfyExchange' : 'Welcome back'}</h1>
-          {!register && <p>Log in to see your items, requests and enquiries from other trainees.</p>}
+          {!register && <p>Log in to see your listings, needs and enquiries from other trainees.</p>}
+          {!register && expired && <p role="status" className="flash">{SESSION_MESSAGE}</p>}
         </section>
 
         <form className="auth-card" onSubmit={submit} noValidate>
@@ -131,7 +148,7 @@ export default function AuthPage({ register = false }) {
             )}
           </div>
 
-          <FormError>{form.formError}</FormError>
+          <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
 
           <button className="primary auth-submit" disabled={busy} aria-busy={busy}>
             {form.busy ? (register ? 'Creating your account…' : 'Logging in…') : register ? 'Create account' : 'Log in'}

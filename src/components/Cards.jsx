@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Clock, MapPin, Sparkles, UserRound, Wallet } from 'lucide-react';
 import { Pill } from './Ui';
+import Photo from './Photo';
 import {
   CONDITIONS,
   LISTING_TYPES,
@@ -15,15 +16,21 @@ import {
 // p1..p7 are the placeholder gradients in style.css.
 const shade = (i) => `p${(i % 7) + 1}`;
 
-export function ProductCard({ item, i = 0 }) {
+// A fixed 4:3 photo frame and a fixed text layout (badge, 2-line title, price, condition, place),
+// so every card in a row lines up whatever its title length or photo shape.
+export function ProductCard({ item }) {
   return (
     <Link to={`/listings/${item.id}`} className="product">
-      <div className={`product-img ${shade(i)}`}>
-        {item.image_url ? <img src={item.image_url} alt={item.title} /> : <span aria-hidden="true">{iconOf(item.category)}</span>}
-        <Pill tone={toneOf(LISTING_TYPES, item.listing_type)}>{labelOf(LISTING_TYPES, item.listing_type)}</Pill>
+      <div className="product-frame">
+        {item.image_url ? (
+          <Photo src={item.image_url} alt={item.title} category={item.category} width="800" height="600" loading="lazy" decoding="async" />
+        ) : (
+          <span aria-hidden="true">{iconOf(item.category)}</span>
+        )}
       </div>
       <div className="product-info">
-        <b>{item.title}</b>
+        <Pill tone={toneOf(LISTING_TYPES, item.listing_type)}>{labelOf(LISTING_TYPES, item.listing_type)}</Pill>
+        <b title={item.title}>{item.title}</b>
         <strong>{formatPrice(item.price, item.price_unit)}</strong>
         <small><Sparkles aria-hidden="true" /> {labelOf(CONDITIONS, item.condition)}</small>
         <small><MapPin aria-hidden="true" /> {item.location}</small>

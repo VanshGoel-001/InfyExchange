@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { toFailure } from '../services/api';
+import { failureCopy } from '../utils/messages';
 import { splitServerError } from '../utils/validate';
 
 /**
@@ -11,13 +13,16 @@ import { splitServerError } from '../utils/validate';
  * `validate(values)` returns { fieldName: 'message' } for every problem.
  * Inputs need `name={field}` so focus can find them.
  */
-export function useForm(initial, validate, fieldNames = Object.keys(initial)) {
+export function useForm(initial, validate, fieldNames = Object.keys(initial), { context = 'save' } = {}) {
   const [values, setValues] = useState(initial);
   const [touched, setTouched] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [remote, setRemote] = useState({});
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Set when the request itself failed (not a problem with what was typed): { text, action } for one inline line.
+  const [failure, setFailure] = useState(null);
+  const lastSubmit = useRef(null);
 
   const problems = validate(values);
 
@@ -44,16 +49,16 @@ export function useForm(initial, validate, fieldNames = Object.keys(initial)) {
     'aria-invalid': error(key) ? 'true' : undefined,
   });
 
-  const handleSubmit = (onValid) => async (event) => {
-    event.preventDefault();
+  const execute = async (onValid, form) => {
     if (busy) return;
-    const form = event.currentTarget;
+    lastSubmit.current = onValid;
     setSubmitted(true);
     setFormError('');
+    setFailure(null);
 
     const first = Object.keys(problems)[0];
     if (first) {
-      form.elements[first]?.focus();
+      form?.elements[first]?.focus();
       return;
     }
 
@@ -62,13 +67,29 @@ export function useForm(initial, validate, fieldNames = Object.keys(initial)) {
       await onValid(values);
     } catch (err) {
       if (err?.name === 'AbortError') return;
-      const { fields, general } = splitServerError(err, fieldNames);
-      setRemote(fields);
-      setFormError(general);
+      const problem = toFailure(err);
+      if (['invalid', 'conflict', 'limited'].includes(problem.kind)) {
+        // Something about what was typed: show it next to the field, or as one line for the form.
+        const { fields, general } = splitServerError(err, fieldNames);
+        setRemote(fields);
+        setFormError(general);
+      } else {
+        // The request itself failed. Everything typed stays; one line and a Retry.
+        const { text, action } = failureCopy(problem, context);
+        setFailure({ text, action });
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  return { values, set, bind, error, handleSubmit, busy, formError, setFormError };
+  const handleSubmit = (onValid) => async (event) => {
+    event.preventDefault();
+    await execute(onValid, event.currentTarget);
+  };
+
+  // Try the same submit again with what is on screen (the Retry next to the error).
+  const resubmit = () => (lastSubmit.current ? execute(lastSubmit.current) : undefined);
+
+  return { values, set, bind, error, handleSubmit, resubmit, busy, formError, failure, setFormError };
 }

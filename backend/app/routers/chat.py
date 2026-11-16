@@ -18,6 +18,7 @@ from app.schemas.chat import (
     MessageResponse,
     ReportCreate,
 )
+from app.utils.names import plain_preview
 from app.services.notify import (
     is_blocked_between,
     notify,
@@ -251,6 +252,9 @@ def send_message(
             f"New message from {short(current_user.name)} about "
             f"\"{title}\".",
             interest.id,
+            actor_id=current_user.id,
+            listing_title=interest.listing.title,
+            detail=plain_preview(data.body, 80),
         )
 
     db.commit()

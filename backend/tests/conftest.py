@@ -41,6 +41,7 @@ from app.models import (  # noqa: E402,F401 - import registers all tables
     Listing,
     ListingImage,
     Need,
+    PickupArea,
     User,
 )
 
@@ -87,6 +88,16 @@ def fresh_database():
 
     Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
+
+    # The pickup areas the migration seeds (ids 1-6, ECC first), so listings can be posted.
+    with database.SessionLocal() as seed:
+        for position, (name, has_blocks) in enumerate(
+            [("ECC", True), ("GEC 1", False), ("GEC 2", False),
+             ("Recreational Center", False), ("Food Court", False), ("Other", False)],
+            start=1,
+        ):
+            seed.add(PickupArea(name=name, has_blocks=has_blocks, is_active=True, sort_order=position))
+        seed.commit()
 
     for limiter in (
         rate_limit.login_limiter,

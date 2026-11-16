@@ -1,3 +1,5 @@
+import { formatRupees, looksLikeLink } from './labels';
+
 // Client-side checks. They mirror the backend's limits exactly (backend/app/schemas, routers/listings.py)
 // so people hear about a mistake next to the field instead of from a failed request.
 // The server stays authoritative: change a limit here and there together.
@@ -16,6 +18,9 @@ export const LIMITS = {
   report: [5, 500],
   images: 5,
   imageBytes: 5 * 1024 * 1024,
+  // Narrower photos look blurry in the 4:3 frame; the server rejects them too.
+  imageMinWidth: 600,
+  block: [1, 100],
   // The database stores whole rupees in a 32-bit column; this keeps typos from turning into a server error.
   maxAmount: 10_000_000,
 };
@@ -23,6 +28,13 @@ export const LIMITS = {
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Letters (any script), spaces and . ' ’ - only, and nothing that looks like a link. Mirrors backend/app/utils/names.py.
+const personName = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  return /^[\p{L}\p{M} .'’-]+$/u.test(text) && !looksLikeLink(text) ? '' : "Use only letters, spaces and . ' - in your name.";
+};
 
 const length = (value, label, [min, max]) => {
   const size = String(value ?? '').trim().length;
@@ -39,7 +51,7 @@ const amount = (value, label, { required }) => {
   if (!/^\d+$/.test(text)) return `${label[0].toUpperCase()}${label.slice(1)} must be a whole number of rupees, like 500.`;
   const number = Number(text);
   if (required && number <= 0) return `${label[0].toUpperCase()}${label.slice(1)} must be more than ₹0.`;
-  if (number > LIMITS.maxAmount) return `${label[0].toUpperCase()}${label.slice(1)} can be at most ₹${LIMITS.maxAmount.toLocaleString('en-IN')}.`;
+  if (number > LIMITS.maxAmount) return `${label[0].toUpperCase()}${label.slice(1)} can be at most ${formatRupees(LIMITS.maxAmount)}.`;
   return '';
 };
 
@@ -91,7 +103,7 @@ export const validateLogin = (v) =>
 
 export const validateRegister = (v) =>
   compact({
-    name: length(v.name, 'your name', LIMITS.name),
+    name: length(v.name, 'your name', LIMITS.name) || personName(v.name),
     email: email(v.email),
     phone: phone(v.phone),
     password: password(v.password),
@@ -122,11 +134,34 @@ const imageErrors = (files) => {
   return '';
 };
 
+// Block numbers are optional, digits only, 1-100.
+const blockNo = (value) => {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const number = Number(text);
+  return /^\d+$/.test(text) && number >= LIMITS.block[0] && number <= LIMITS.block[1]
+    ? ''
+    : `Block number must be between ${LIMITS.block[0]} and ${LIMITS.block[1]}.`;
+};
+
+// Pixel width of a picked photo, or null when the browser cannot read it (the server then decides).
+export async function readImageWidth(file) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const { width } = bitmap;
+    bitmap.close?.();
+    return width;
+  } catch {
+    return null;
+  }
+}
+
 export const validateListing = (v) =>
   compact({
     title: length(v.title, 'a name for the item', LIMITS.title),
     price: v.listing_type === 'SELL' || v.listing_type === 'RENT' ? amount(v.price, 'the price', { required: true }) : '',
-    location: length(v.location, 'a pickup location', LIMITS.location),
+    pickup_area_id: v.pickup_area_id ? '' : 'Choose a pickup area.',
+    block_no: blockNo(v.block_no),
     description: length(v.description, 'a description', LIMITS.description),
     images: imageErrors(v.images),
   });

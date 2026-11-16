@@ -53,7 +53,7 @@ def listing_form(**overrides) -> dict:
         "listing_type": "SELL",
         "price": "500",
         "condition": "GOOD",
-        "location": "ECC",
+        "pickup_area_id": "1",  # ECC, seeded by conftest like the migration does
         "description": "Lightly used racket",
     }
     for key, value in overrides.items():
@@ -155,12 +155,14 @@ def add_interest(db, listing, user, status: InterestStatus = InterestStatus.PEND
 class FakeCloudinary:
     """Records calls instead of talking to Cloudinary.
 
-    ``fail_on`` holds 1-based upload call numbers that should raise ValueError;
-    ``delete_raises`` makes every delete raise, like a Cloudinary outage.
+    ``fail_on`` holds 1-based upload call numbers that fail like a Cloudinary outage
+    (RuntimeError); ``invalid_on`` holds ones rejected by our own checks (ValueError, whose
+    message reaches the user); ``delete_raises`` makes every delete raise.
     """
 
-    def __init__(self, fail_on=(), delete_raises=False):
+    def __init__(self, fail_on=(), delete_raises=False, invalid_on=()):
         self.fail_on = set(fail_on)
+        self.invalid_on = set(invalid_on)
         self.delete_raises = delete_raises
         self.upload_calls = 0
         self.deleted: list[str] = []
@@ -169,7 +171,9 @@ class FakeCloudinary:
         self.upload_calls += 1
         n = self.upload_calls
         if n in self.fail_on:
-            raise ValueError("simulated upload failure")
+            raise RuntimeError("simulated upload failure")
+        if n in self.invalid_on:
+            raise ValueError("Image is too small. Use a photo at least 600 pixels wide.")
         return {
             "public_id": f"test/{listing_id}/{n}",
             "url": f"https://res.cloudinary.com/test/{listing_id}/{n}.png",
@@ -181,9 +185,9 @@ class FakeCloudinary:
         self.deleted.append(public_id)
 
 
-def install_fake_cloudinary(monkeypatch, fail_on=(), delete_raises=False) -> FakeCloudinary:
+def install_fake_cloudinary(monkeypatch, fail_on=(), delete_raises=False, invalid_on=()) -> FakeCloudinary:
     """Patch the Cloudinary functions as imported by the listings router."""
-    fake = FakeCloudinary(fail_on, delete_raises)
+    fake = FakeCloudinary(fail_on, delete_raises, invalid_on)
     monkeypatch.setattr("app.routers.listings.upload_image", fake.upload)
     monkeypatch.setattr("app.routers.listings.delete_image", fake.delete)
     return fake

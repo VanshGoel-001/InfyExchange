@@ -51,6 +51,7 @@ def _expire_pending(db: Session, now: datetime) -> int:
             f"expired because the seller did not reply within "
             f"{settings.pending_enquiry_expiry_days} days.",
             interest.id,
+            listing_title=interest.listing.title,
         )
 
     return len(stale)
@@ -88,6 +89,8 @@ def _remind_inactive(db: Session, now: datetime) -> int:
             f"\"{short(interest.listing.title)}\" has been quiet. "
             "Close the deal, or tell them it is still available.",
             interest.id,
+            actor_id=interest.interested_user_id,
+            listing_title=interest.listing.title,
         )
 
     return len(quiet)

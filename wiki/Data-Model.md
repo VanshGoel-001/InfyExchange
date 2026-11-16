@@ -1,6 +1,6 @@
 # Data Model
 
-Eleven tables, all defined with SQLAlchemy 2 declarative models in `backend/app/models/`. Revisions: `ee1edd3df3f3` initial schema (2026-10-19) → `b7c41d9e5a20` Google sign-in → `c3a8f1d27b64` enquiry deal flow, chat, notifications, blocks, reports → `d5b2e9a14c70` failed emails.
+Twelve tables, all defined with SQLAlchemy 2 declarative models in `backend/app/models/`. Revisions: `ee1edd3df3f3` initial schema (2026-10-19) → `b7c41d9e5a20` Google sign-in → `c3a8f1d27b64` enquiry deal flow, chat, notifications, blocks, reports → `d5b2e9a14c70` failed emails → `e7a3c1d94b52` pickup areas → `f2c9a6b17d34` notification actor, listing title and detail → `h4e2c9f63b17` notification expiry.
 
 ## Entity-relationship diagram
 
@@ -40,6 +40,8 @@ erDiagram
         string price_unit
         enum condition
         string location
+        int pickup_area_id
+        int block_no
         text description
         enum status
         datetime created_at
@@ -125,10 +127,16 @@ Relationships `listings`, `needs`, `interests` all use `cascade="all, delete-orp
 | `price` | int | whole rupees; default 0 |
 | `price_unit` | varchar(30), null | e.g. `day`, `week` |
 | `condition` | enum `itemcondition` | |
-| `location` | varchar(100) | free text, e.g. "ECC" |
+| `location` | varchar(100) | display text such as `ECC - 87`, kept in step with the two columns below (older code only wrote this one) |
+| `pickup_area_id` | FK → `pickup_areas.id`, null | indexed; null only on rows written by the previous release |
+| `block_no` | smallint, null | 1–100, only for areas with blocks |
 | `description` | text | |
 | `status` | enum `listingstatus` | default `ACTIVE`, indexed |
 | `created_at`, `expires_at` | timestamp | both indexed; expiry = creation + 30 days |
+
+### `pickup_areas`
+
+`id`, `name` (varchar 60, unique), `has_blocks` (bool), `is_active` (bool), `sort_order` (int). Admin-editable; seeded with ECC (has blocks), GEC 1, GEC 2, Recreational Center, Food Court, Other. Never deleted, only hidden.
 
 ### `listing_images`
 
@@ -158,7 +166,7 @@ Unique constraint **`unique_listing_interest (listing_id, interested_user_id)`**
 
 ### `notifications`
 
-`user_id` (FK cascade), `kind` (varchar 40, a label the SPA uses for nothing more than grouping), `message` (varchar 300, plain text, never contact details), `interest_id` (FK **SET NULL**, so the text survives a deleted enquiry), `created_at`, `read_at`. Index `(user_id, read_at)`.
+`user_id` (FK cascade), `kind` (varchar 40: which template the SPA uses), `actor_id` (FK users **SET NULL**, who did it; null on older rows and system notices), `listing_title` (varchar 150, the title at the time, so it still reads after the listing is deleted), `detail` (varchar 120, one short plain-text extra, never contact details), `message` (varchar 300, **no longer sent or shown**: kept and still written so the previous release keeps working during a rollout), `interest_id` (FK **SET NULL**), `created_at`, `read_at`, `expires_at` (created_at + 30 days; indexed; every query ignores rows past it and the daily cleanup deletes them). Index `(user_id, read_at)`.
 
 ### `user_blocks`
 
@@ -234,6 +242,8 @@ All timestamps are **naive UTC** values created with `datetime.utcnow()` and sto
 - `env.py` takes the URL from `settings.database_url_unpooled or settings.database_url` (never from `alembic.ini`), imports `app.models` so metadata is complete, and uses `compare_type=True`.
 - Startup migration (`services/migration.py`) passes a live connection to Alembic via `config.attributes["connection"]` after taking a **PostgreSQL transaction-level advisory lock** (`pg_advisory_xact_lock(74193820416)`). Concurrent Cloud Run instances therefore serialise their `upgrade head`.
 - `d5b2e9a14c70` (failed emails) is deliberately separate from `c3a8f1d27b64` so the one table added for email is easy to review on its own. `c3a8f1d27b64` also backfills `last_activity_at = now` for enquiries that were already `ACCEPTED`, so their first inactivity reminder comes 48 hours after the deploy, not at once.
+- `e7a3c1d94b52` (pickup areas) adds the table, two nullable listing columns and the seed rows, and converts existing locations: `ECC87` / `ECC 92` become area ECC with that block; text that matches no area becomes `Other` and the original wording is dropped (by decision). It was run on SQLite only (including a test with old-style rows); run it on a Neon branch before relying on it.
+- `f2c9a6b17d34` (notification fields) only adds three nullable columns and a foreign key. `h4e2c9f63b17` (notification expiry) adds `expires_at` with a database default of now + 30 days, so rows the previous release inserts still get one, and sets every existing row to `created_at + 30 days`: notifications older than 30 days (including any old test rows) disappear from the bell as soon as it runs. Both were run on SQLite only; try them on a Neon branch first.
 - Rollouts must stay backward-compatible with the previous Cloud Run revision (old code runs against the new schema while traffic shifts). Destructive changes need a staged plan; see [CI/CD & Deployment](CI-CD-and-Deployment.md#rollback).
 
 Adding a migration:

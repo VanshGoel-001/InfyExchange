@@ -6,7 +6,9 @@ import { Field, FormError, Pill } from '../components/Ui';
 import { ContactReveal } from './AccountPages';
 import { useAuth } from '../context/AuthContext';
 import { useForm } from '../hooks/useForm';
-import { api } from '../services/api';
+import { api, toFailure } from '../services/api';
+import { InlineError } from '../components/Section';
+import { failureCopy } from '../utils/messages';
 import {
   CLOSE_DEAL_VERBS,
   INTEREST_STATUSES,
@@ -43,7 +45,7 @@ function ReportForm({ onSend, onCancel }) {
       <Field label="What went wrong?" error={form.error('reason')} hint={`${form.values.reason.trim().length} / ${LIMITS.report[1]}`}>
         <textarea {...form.bind('reason')} maxLength={LIMITS.report[1]} />
       </Field>
-      <FormError>{form.formError}</FormError>
+      <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
       <div className="button-row">
         <button className="danger compact" disabled={form.busy}>{form.busy ? 'Sending…' : 'Send report'}</button>
         <button type="button" className="outline compact" onClick={onCancel} disabled={form.busy}>Cancel</button>
@@ -57,7 +59,9 @@ export default function ChatPage() {
   const { token, user } = useAuth();
   const [chat, setChat] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [loadError, setLoadError] = useState('');
+  const [loadError, setLoadError] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+  const [sendFailed, setSendFailed] = useState(null);
   const [pollError, setPollError] = useState('');
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
@@ -95,14 +99,15 @@ export default function ChatPage() {
     loaded.current = false;
     setChat(null);
     setMessages([]);
-    setLoadError('');
+    setLoadError(null);
 
     const tick = () =>
       poll().catch((err) => {
-        if (shownId.current !== id) return;
+        if (shownId.current !== id || err?.name === 'AbortError') return;
         // Only the first load is fatal; a hiccup later keeps the conversation on screen.
-        if (loaded.current) setPollError(err.message);
-        else setLoadError(err.message);
+        const failure = failureCopy(toFailure(err), 'generic');
+        if (loaded.current) setPollError(failure.text);
+        else setLoadError(failure);
       });
 
     tick();
@@ -110,7 +115,7 @@ export default function ChatPage() {
       if (document.visibilityState === 'visible') tick();
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [poll, id]);
+  }, [poll, id, attempt]);
 
   useEffect(() => {
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
@@ -127,7 +132,7 @@ export default function ChatPage() {
       await poll();
       if (done) setNotice(done);
     } catch (err) {
-      setActionError(err.message);
+      setActionError(failureCopy(toFailure(err), 'generic').text);
     } finally {
       setBusy(false);
     }
@@ -139,12 +144,14 @@ export default function ChatPage() {
     if (!body || sending) return;
     setSending(true);
     setActionError('');
+    setSendFailed(null);
     try {
       await api.sendMessage(id, body, token);
       setDraft('');
       await poll();
     } catch (err) {
-      setActionError(err.message);
+      // The text stays in the box, so it is never lost; one line and a tap to try again.
+      setSendFailed(failureCopy(toFailure(err), 'chat'));
     } finally {
       setSending(false);
     }
@@ -153,7 +160,7 @@ export default function ChatPage() {
   if (loadError) {
     return (
       <AppShell>
-        <p role="alert" className="error">{loadError}</p>
+        <InlineError text={loadError.text} action={loadError.action} onRetry={() => setAttempt((n) => n + 1)} />
         <Link className="primary" to="/activity">Back to enquiries</Link>
       </AppShell>
     );
@@ -265,7 +272,8 @@ export default function ChatPage() {
       )}
 
       <section className="panel chat-box">
-        {pollError && <p role="alert" className="error">Could not refresh: {pollError}</p>}
+        {pollError && <p role="alert" className="error">{pollError}</p>}
+        {sendFailed && <InlineError text={sendFailed.text} action={sendFailed.action} onRetry={() => send({ preventDefault() {} })} />}
         <div className="chat-list" ref={list} aria-live="polite">
           {!messages.length && <p className="empty">{chat.can_send ? 'No messages yet. Say hello.' : 'No messages.'}</p>}
           {messages.map((message) => (

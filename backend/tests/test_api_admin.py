@@ -87,6 +87,8 @@ class TestAdminStats:
             "total_listings": 2, "active_listings": 1,
             "total_needs": 2, "active_needs": 1,
             "total_interests": 2, "accepted_interests": 1,
+            "pending_interests": 1, "rejected_interests": 0,
+            "total_reports": 0, "failed_emails": 0,
         }
 
     def test_empty_platform_reports_only_the_admin(self, client, admin):

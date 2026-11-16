@@ -14,7 +14,6 @@ Findings from reading the code and docs for this wiki. Each item is marked **Ver
 | No way to renew a listing | Expires after 30 days; must be reposted |
 | Owners can edit only the price | By design: everything else is locked once posted. To change anything else, delete and repost |
 | Email is limited to a welcome message and an admin alert | By design. Sellers and buyers are told of enquiries, replies and messages through the bell only, so someone who never opens the site learns nothing. Google sign-up gets no welcome email |
-| The bell is behind the menu button on phones | `NotificationBell` sits in the header's account area, which collapses into the hamburger menu at phone width |
 | Chat is polled, not pushed | The open chat asks every 4 s (the bell every 30 s). Fine at this scale; many simultaneous chats would need WebSockets and shared state. No attachments, and messages cannot be edited or deleted |
 | Removal notices are owner-only | An admin deleting an item, the expiry cleanup and deactivating a member remove enquiries without telling the people in them |
 | Gmail-only registration by default | Configurable via `ALLOWED_EMAIL_DOMAINS` |

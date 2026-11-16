@@ -28,6 +28,7 @@ from app.services.google import (
     GoogleUnavailable,
     verify_google_id_token,
 )
+from app.utils.names import clean_name
 from app.services.rate_limit import (
     account_key,
     account_login_limiter,
@@ -76,10 +77,11 @@ def _require_allowed_domain(email: str) -> None:
 
 
 def _google_display_name(claims: dict, email: str) -> str:
-    name = str(claims.get("name") or "").strip()[:100]
+    # Google does not enforce our name rules, so make the name safe to show instead of refusing the sign-in.
+    name = clean_name(str(claims.get("name") or ""))
     if len(name) >= 2:
         return name
-    local_part = email.split("@", 1)[0][:100]
+    local_part = clean_name(email.split("@", 1)[0])
     return local_part if len(local_part) >= 2 else "Google user"
 
 

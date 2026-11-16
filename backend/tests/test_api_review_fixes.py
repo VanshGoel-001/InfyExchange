@@ -108,9 +108,9 @@ class TestReEnquiryAfterClosure:
 class TestBlankText:
     """Spaces counted toward min_length, so "   " was saved as an empty title, location or description."""
 
-    @pytest.mark.parametrize("field", ["title", "location", "description"])
+    @pytest.mark.parametrize("field", ["title", "description"])
     def test_listing_text_of_only_spaces_is_rejected(self, client, db_session, monkeypatch, field):
-        """TC-REV-010 | AC-06.1 | T08 | negative | a listing whose title, location or description is only spaces is 422 naming the field, and nothing is created"""
+        """TC-REV-010 | AC-06.1 | T08 | negative | a listing whose title or description is only spaces is 422 naming the field, and nothing is created"""
         install_fake_cloudinary(monkeypatch)
         user = make_user(db_session)
         response = client.post(LISTINGS, data=listing_form(**{field: "   "}), headers=auth_headers(user))

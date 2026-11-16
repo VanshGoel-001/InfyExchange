@@ -266,6 +266,8 @@ def create_interest(
             f"{short(current_user.name)} asked about "
             f"\"{short(listing.title)}\".",
             interest.id,
+            actor_id=current_user.id,
+            listing_title=listing.title,
         )
 
         db.commit()
@@ -428,6 +430,8 @@ def accept_interest(
         f"{short(current_user.name)} accepted your enquiry about "
         f"\"{title}\". You can chat now.",
         interest.id,
+        actor_id=current_user.id,
+        listing_title=interest.listing.title,
     )
 
     db.commit()
@@ -479,6 +483,8 @@ def reject_interest(
         "enquiry_declined",
         message,
         interest.id,
+        actor_id=current_user.id,
+        listing_title=interest.listing.title,
     )
 
     db.commit()
@@ -557,6 +563,8 @@ def close_deal(
         f"{short(current_user.name)} closed the deal for \"{title}\" with "
         "you. Did you get it? Let them know in the chat.",
         interest.id,
+        actor_id=current_user.id,
+        listing_title=listing.title,
     )
 
     others = db.scalars(
@@ -577,6 +585,7 @@ def close_deal(
             "enquiry_closed",
             f"\"{title}\" is no longer available.",
             other.id,
+            listing_title=listing.title,
         )
 
     db.commit()
@@ -668,6 +677,10 @@ def answer_received(
             f"\"{short(interest.listing.title)}\" yet."
         ),
         interest.id,
+        actor_id=current_user.id,
+        listing_title=interest.listing.title,
+        # A code, not text: the SPA words it ("got it" / "has not got it yet").
+        detail="received" if data.received else "not_received",
     )
 
     db.commit()

@@ -4,11 +4,19 @@ import re
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.utils.enums import UserRole
+from app.utils.names import is_valid_name
 from app.utils.phone import validate_indian_mobile
 
 
 class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=100)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_plain(cls, value: str) -> str:
+        if not is_valid_name(value):
+            raise ValueError("Use only letters, spaces and . ' - in your name")
+        return value
 
     email: EmailStr
 

@@ -96,7 +96,7 @@ sequenceDiagram
 
 ## Notifications and email
 
-The **bell** in the header polls every 30 seconds and shows an unread count; each entry opens the relevant chat. Kinds: new enquiry, accepted, declined, closed-out, expired, deal closed, new message (once per unread run), price changed, item returned, item removed, buyer's answer, quiet-chat reminder.
+The **bell** in the header polls every 30 seconds and shows an unread count (hidden at 0). The panel shows the latest 20, grouped under New and Earlier; each row shows who did what, the listing or a plain-text message preview, and a relative time (full date on hover). Tapping a row marks it read, opens the chat, the enquiries page or the listing, and closes the panel; × deletes one, and "Clear all" (after "Clear all? Yes / No") deletes them all. Notifications expire after 30 days and are then deleted by the daily cleanup. Kinds: new enquiry, accepted, declined, closed-out, expired, deal closed, new message (once per unread run), price changed, item returned, item removed, buyer's answer, quiet-chat reminder.
 
 **Email** is deliberately small: a welcome email at registration and an alert to `ADMIN_EMAIL` for each enquiry. Sellers and buyers are told of everything else through the bell only. A failed send is stored for an admin to retry or discard (*Admin → Failed emails*).
 
@@ -130,10 +130,12 @@ Both listing and need creation look for an identical record from the same user i
 | --- | --- | --- |
 | Images per listing | 5 | `MAX_IMAGES_PER_LISTING` |
 | Image size | 5 MB each | `MAX_IMAGE_SIZE_MB` |
-| Image formats | JPEG, PNG, WebP (content type **and** magic bytes) | `cloudinary.py` |
+| Image formats | JPEG, PNG, WebP (content type **and** magic bytes); stored as WebP | `cloudinary.py` |
+| Image width | at least 600 px; shrunk to 1200 px | `MIN_IMAGE_WIDTH`, `MAX_IMAGE_WIDTH` |
 | Listing/need lifetime | 30 days | `LISTING_EXPIRY_DAYS` |
 | Title | 2–150 chars | schemas/forms |
-| Location | 2–100 chars | schemas/forms |
+| Pickup area | one of the admin-managed areas; optional block 1–100 where the area has blocks | `pickup_areas`, `routers/listings.py` |
+| Request location (needs) | 2–100 chars, free text | schemas/forms |
 | Description | 2–2000 chars | schemas/forms |
 | Interest message | ≤ 500 chars | `InterestCreate` |
 | Decline reply | ≤ 200 chars | `InterestDecline` |

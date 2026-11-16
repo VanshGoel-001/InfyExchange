@@ -73,6 +73,7 @@ class TestUploadImage:
             return {
                 "public_id": "infyexchange/listings/5/abc",
                 "secure_url": "https://res.cloudinary.com/test/abc.png",
+                "width": 1200,
             }
 
         monkeypatch.setattr(cloud.uploader, "upload", fake_upload)
@@ -134,3 +135,50 @@ class TestDeleteImage:
         monkeypatch.setattr(cloud.uploader, "destroy", lambda public_id, **kw: calls.append((public_id, kw)))
         cloud.delete_image("infyexchange/listings/5/abc")
         assert calls == [("infyexchange/listings/5/abc", {"resource_type": "image", "invalidate": True})]
+
+
+class TestUploadProcessing:
+    """What upload_image asks Cloudinary to do, and how it reacts to the size it reports."""
+
+    @pytest.fixture()
+    def cloud_calls(self, monkeypatch):
+        calls = {"upload": [], "destroy": []}
+
+        def fake_upload(stream, **kwargs):
+            calls["upload"].append({"stream": stream, **kwargs})
+            return {
+                "public_id": "infyexchange/listings/5/abc",
+                "secure_url": "https://res.cloudinary.com/test/abc.webp",
+                "width": calls.get("width", 1200),
+            }
+
+        monkeypatch.setattr(cloud.uploader, "upload", fake_upload)
+        monkeypatch.setattr(cloud.uploader, "destroy", lambda public_id, **kw: calls["destroy"].append(public_id))
+        return calls
+
+    def test_upload_requests_small_webp_without_metadata(self, cloud_calls):
+        """TC-SVC-IMG-030 | AC-16.2 | T09 | business | the upload asks Cloudinary to limit width to 1200, convert to WebP and strip metadata before storing"""
+        _run(cloud.upload_image(_upload_file(PNG_BYTES), listing_id=5))
+        call = cloud_calls["upload"][0]
+        assert call["format"] == "webp"
+        assert call["transformation"] == [{"width": settings.max_image_width, "crop": "limit", "flags": "strip_profile"}]
+        assert settings.max_image_width == 1200
+
+    def test_stored_name_never_comes_from_the_user(self, cloud_calls):
+        """TC-SVC-IMG-031 | AC-16.2 | T09 | business | the uploaded filename is not passed on and Cloudinary is told to generate a unique name"""
+        _run(cloud.upload_image(_upload_file(PNG_BYTES, filename="my-secret-holiday.png"), listing_id=5))
+        call = cloud_calls["upload"][0]
+        assert call["stream"].name == "image"
+        assert call["use_filename"] is False and call["unique_filename"] is True
+
+    @pytest.mark.parametrize("width, accepted", [(600, True), (599, False), (1200, True), (100, False)])
+    def test_minimum_width_boundary(self, cloud_calls, width, accepted):
+        """TC-SVC-IMG-032 | AC-16.2 | T09 | boundary | an image reported as at least 600 px wide is kept; narrower is rejected and removed from Cloudinary"""
+        cloud_calls["width"] = width
+        if accepted:
+            _run(cloud.upload_image(_upload_file(PNG_BYTES), listing_id=5))
+            assert cloud_calls["destroy"] == []
+        else:
+            with pytest.raises(ValueError, match="at least 600 pixels wide"):
+                _run(cloud.upload_image(_upload_file(PNG_BYTES), listing_id=5))
+            assert cloud_calls["destroy"] == ["infyexchange/listings/5/abc"]

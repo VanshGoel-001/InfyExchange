@@ -17,7 +17,7 @@ Interactive docs: `/docs` (Swagger UI), `/redoc`, `/openapi.json` – **availabl
 | Pagination | `skip` (≥0, default 0) and `limit` (default 20 for public/user lists, 50 for admin lists; max 100, or 200 for most admin lists, 100 for audit logs). No total count on public lists. |
 | Ordering | Newest first (`created_at DESC`). |
 | Timestamps | Naive UTC datetimes serialised as ISO-8601 strings without a timezone suffix. |
-| Correlation | Send `X-Request-ID` (`[A-Za-z0-9_.-]{1,64}`) to choose your own ID; otherwise one is generated. Always echoed back in the response header. |
+| Correlation | Send `X-Request-ID` (`[A-Za-z0-9_.-]{1,64}`) to choose your own ID; otherwise one is generated. Always echoed back in the response header (including on a crash, and exposed to the browser through CORS). A `500` answers `{"detail": <generic text>, "ref": <the request id>}` and logs the full error with that id; nothing else about the fault leaves the server. The SPA shows the `ref` to admins only. |
 | Rate limiting | Exceeding a limit returns `429` with `Retry-After: <window seconds>`. See [Rate limits](#rate-limits). |
 
 ## Enumerations
@@ -48,6 +48,7 @@ Interactive docs: `/docs` (Swagger UI), `/redoc`, `/openapi.json` – **availabl
 | PATCH | `/api/users/me` | user | – | Change role and/or joining date |
 | GET | `/api/users/me/summary` | user | – | Activity counters |
 | POST | `/api/listings` | user | `create-listing` | Create listing (+ images) |
+| GET | `/api/pickup-areas` | – | `read-pickup-areas` | Active pickup areas for the item form and filter |
 | GET | `/api/listings` | – | `read-listings` | Search active listings |
 | GET | `/api/listings/me` | user | – | My listings (any status) |
 | GET | `/api/listings/{id}` | – | – | Listing detail |
@@ -171,18 +172,21 @@ Body: `role` and/or `joining_date` (at least one). Name, email and phone are not
 | `price` | int | 0 to 10 000 000, default 0 |
 | `price_unit` | string | ≤30; only meaningful for `RENT` |
 | `condition` | `ItemCondition` | required |
-| `location` | string | 2–100 |
+| `pickup_area_id` | int | required; an **active** pickup area (`422 Choose a pickup area from the list` otherwise). The old free-text `location` field is no longer read |
+| `block_no` | int | optional, 1–100; only for an area with `has_blocks` (`422 <area> has no block numbers` otherwise) |
 | `description` | string | 2–2000 |
-| `images` | file[] | ≤ `MAX_IMAGES_PER_LISTING` (5); JPEG/PNG/WebP; ≤ `MAX_IMAGE_SIZE_MB` (5) each; magic-byte checked |
+| `images` | file[] | ≤ `MAX_IMAGES_PER_LISTING` (5); JPEG/PNG/WebP; ≤ `MAX_IMAGE_SIZE_MB` (5) each; magic-byte checked; at least `MIN_IMAGE_WIDTH` (600) px wide |
 
 Server-side rules (verified in `routers/listings.py`):
 
 - `LEND` and `GIVEAWAY` force `price = 0` and `price_unit = null`.
 - `SELL` and `RENT` require `price > 0` (`400`).
 - `RENT` without `price_unit` defaults to `"day"`.
-- **Duplicate guard:** same owner + title + type + price + location + description within `DUPLICATE_SUBMISSION_WINDOW_SECONDS` (60) returns the existing listing instead of creating another (still HTTP 201).
+- The listing's `location` text is built by the server as `<area>` or `<area> - <block>` (e.g. `ECC - 87`) and returned together with `pickup_area_id`, `pickup_area` and `block_no`.
+- **Duplicate guard:** same owner + title + type + price + pickup area + block + description within `DUPLICATE_SUBMISSION_WINDOW_SECONDS` (60) returns the existing listing instead of creating another (still HTTP 201).
 - `expires_at = now + LISTING_EXPIRY_DAYS` (30 days).
-- If any image fails, uploaded images are deleted, the listing is deleted, and the response is `400 Failed to upload images. Please try again.`
+- Each image is stored by Cloudinary as WebP, limited to `MAX_IMAGE_WIDTH` (1200) px wide, with metadata (EXIF) stripped and a random name; the uploaded filename is never used. A width under `MIN_IMAGE_WIDTH` is rejected after upload and the stored copy is removed. Not verified against a live Cloudinary account (the transformation arguments are covered by tests; the result is not).
+- If any image fails, uploaded images are deleted, the listing is deleted, and the response is `400`. Our own validation messages (type, size, width) are returned as they are; any other failure is `Failed to upload images. Please try again.`
 
 ### `GET /api/listings` → `ListingResponse[]`
 
@@ -192,11 +196,13 @@ Public. Only `ACTIVE`, non-expired listings.
 | --- | --- | --- |
 | `search` | string | case-insensitive substring of **title** |
 | `category`, `listing_type`, `condition` | enum | exact |
-| `location` | string | case-insensitive substring |
+| `location` | string | case-insensitive substring of the display text (kept for old links; the SPA uses the two below) |
+| `pickup_area_id` | int | exact |
+| `block_no` | int 1–100 | exact |
 | `min_price`, `max_price` | int ≥0 | inclusive bounds |
 | `skip`, `limit` | int | `limit` 1–100, default 20 |
 
-`ListingResponse` adds `owner_name`, `owner_role`, and `image_url` (the first image by lowest `id`).
+`ListingResponse` adds `pickup_area_id`, `pickup_area`, `block_no`, `owner_name`, `owner_role`, and `image_url` (the first image by lowest `id`).
 
 ### `GET /api/listings/me` → `ListingResponse[]`
 
@@ -291,13 +297,15 @@ Blocks or unblocks the other person *in this enquiry*. The block is between two 
 
 ## Notifications
 
-### `GET /api/notifications?limit=20` → `{"unread_count", "items": [{id, kind, message, interest_id, created_at, read}]}`
+### `GET /api/notifications?limit=20` → `{"unread_count", "items": [{id, kind, actor_name, listing_id, listing_title, detail, interest_id, created_at, read}]}`
 
-`limit` 1–50. `unread_count` counts everything unread, not just the page. Text never contains contact details. `interest_id` is the chat to open (null once the enquiry is gone).
+`limit` 1–50 (the bell asks for 20). Only notifications that have **not expired** (`expires_at` is 30 days after creation, `NOTIFICATION_EXPIRY_DAYS`) are returned or counted. `unread_count` is counted over exactly what the list can show, so the badge matches it. **No sentence is sent**: the SPA words each notification from these fields (`utils/notifications.js`) and shows them as plain text; there are no links in a notification. `actor_name` is who did it (cleaned and clipped to 40 characters), `listing_title` the title at the time (≤150), `detail` one short plain-text extra (a chat preview ≤80 with links replaced by the word "link", a price change such as `₹1,23,456 to ₹99,000`, or the code `received` / `not_received` for `received_answer`). Contact details never appear. `interest_id` is the chat or enquiry to open (null once the enquiry is gone).
 
-### `POST /api/notifications/read-all` and `POST /api/notifications/{id}/read`
+**A notification that needs a sender and has none is hidden** (not shown under a made-up name): every kind except `enquiry_expired` and `enquiry_closed` needs a named actor. Rows written before the structured columns existed get their actor worked out from their enquiry; if that is gone too, they are hidden. Nobody is notified about their own action (`notify()` skips a notification whose actor is the recipient).
 
-Another user's notification is `404` (not `403`), so ids cannot be probed.
+### `POST /api/notifications/read-all`, `POST /api/notifications/{id}/read`, `DELETE /api/notifications/{id}`, `DELETE /api/notifications`
+
+`read-all` marks every live notification read. `{id}/read` and `DELETE {id}` answer `{"unread_count"}` (the new badge number). `DELETE /api/notifications` deletes **all** of the caller's notifications (the SPA asks "Clear all? Yes / No" first) and answers `{"unread_count": 0}`. Another member's notification, an expired one and one that does not exist are all the same `404`, so ids cannot be probed. Deleting uses the `notifications-delete` rate-limit bucket.
 
 Notification kinds: `enquiry_received`, `enquiry_accepted`, `enquiry_declined`, `enquiry_closed`, `enquiry_expired`, `deal_closed`, `new_message`, `price_changed`, `item_returned`, `listing_removed`, `received_answer`, `completion_reminder`.
 
@@ -337,12 +345,18 @@ The router-level dependencies run `get_current_admin` and the `admin` rate limit
 
 ### `GET /api/admin/stats`
 
-`total_users`, `active_users`, `total_listings`, `active_listings`, `total_needs`, `active_needs`, `total_interests`, `accepted_interests`.
+`total_users`, `active_users`, `total_listings`, `active_listings`, `total_needs`, `active_needs`, `total_interests`, `accepted_interests`, `pending_interests`, `rejected_interests` (shown as Declined), `total_reports`, `failed_emails`. Members who are deactivated = `total_users - active_users`.
 
 ### Users
 
-- `GET /api/admin/users?skip&limit(≤200)&search` → `{total, items[]}`; search matches name or email (case-insensitive substring). Items include email, phone, role, flags, `joining_date`, `created_at`.
+- `GET /api/admin/users?skip&limit(≤200)&search&status` → `{total, items[]}`; search matches name or email (case-insensitive substring); `status` is `active` or `deactivated` (`422` otherwise). Items include email, phone, role, flags, `joining_date`, `created_at`.
 - `PATCH /api/admin/users/{id}` body `{"is_active"?: bool, "is_admin"?: bool}`. An admin cannot set their own `is_admin` to `false` (`400 Cannot revoke your own admin rights.`). An admin also cannot deactivate their own account (`400 Cannot deactivate your own account.`), which would lock them out with no way back through the API. A no-op change writes no audit entry. Audit action: `UPDATE_USER`.
+
+### Pickup areas
+
+- `GET /api/admin/pickup-areas` → every area including hidden ones (`id`, `name`, `has_blocks`, `is_active`, `sort_order`).
+- `POST /api/admin/pickup-areas` body `{"name", "has_blocks"?}` → `201`. Names are trimmed and unique ignoring case (`409` otherwise); a new area goes to the end of the list. Audit: `CREATE_PICKUP_AREA`.
+- `PATCH /api/admin/pickup-areas/{id}` body with any of `name`, `has_blocks`, `is_active`. Renaming or turning blocks off rewrites the `location` text of the listings in that area. Hiding an area (`is_active: false`) keeps it on existing listings but removes it from `GET /api/pickup-areas`. There is no delete. Audit: `UPDATE_PICKUP_AREA` with the changes.
 
 ### Listings
 
@@ -391,7 +405,7 @@ Defaults from `config.py`; window `RATE_LIMIT_WINDOW_SECONDS` = 60 s. Sliding wi
 | `contact` | `RATE_LIMIT_CONTACT` | 20 | `contact:<ip>` | contact reveal |
 | `admin` | `RATE_LIMIT_ADMIN` | 60 | `admin:<ip>` | all admin routes |
 | `chat` | `RATE_LIMIT_CHAT` | 30 | `chat-send:user:<id>` | sending chat messages |
-| `action` | `RATE_LIMIT_ACTION` | 30 | `<action>:user:<id>` (one bucket per action: `close-deal`, `still-available`, `received`, `edit-listing`, `mark-returned`, `report`, `block`, `notifications-read`) | deal/enquiry state changes, reports, blocks, price edits, mark-read |
+| `action` | `RATE_LIMIT_ACTION` | 30 | `<action>:user:<id>` (one bucket per action: `close-deal`, `still-available`, `received`, `edit-listing`, `mark-returned`, `report`, `block`, `notifications-read`, `notifications-delete`) | deal/enquiry state changes, reports, blocks, price edits, mark-read |
 | `poll` | `RATE_LIMIT_POLL` | 90 | `chat-poll:user:<id>`, `notifications:user:<id>` | chat and bell polling (the SPA polls the chat every 4 s and the bell every 30 s) |
 
 Not rate-limited: `/health`, `/auth/me`, the `/me` lists, listing/need detail, accept/reject, delete.

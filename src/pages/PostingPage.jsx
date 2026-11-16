@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { Header } from '../components/Layout';
@@ -6,10 +6,12 @@ import { Banner, Field, FormError, TipBox } from '../components/Ui';
 import { useAuth } from '../context/AuthContext';
 import { useForm } from '../hooks/useForm';
 import { api } from '../services/api';
+import { InlineError } from '../components/Section';
+import { useLoad } from '../hooks/useLoad';
 import { CATEGORIES, CONDITIONS, LISTING_TYPES, NEED_TYPES, RENT_UNITS } from '../utils/labels';
-import { IMAGE_TYPES, LIMITS, validateListing, validateNeed } from '../utils/validate';
+import { IMAGE_TYPES, LIMITS, readImageWidth, validateListing, validateNeed } from '../utils/validate';
 
-const LISTING_FIELDS = ['title', 'category', 'listing_type', 'price', 'price_unit', 'condition', 'location', 'description', 'images'];
+const LISTING_FIELDS = ['title', 'category', 'listing_type', 'price', 'price_unit', 'condition', 'pickup_area_id', 'block_no', 'description', 'images'];
 const NEED_FIELDS = ['title', 'category', 'need_type', 'budget', 'duration', 'location', 'description'];
 
 const size = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
@@ -49,6 +51,8 @@ export default function PostingPage({ need = false }) {
       duration: '',
       budget: '',
       location: '',
+      pickup_area_id: '',
+      block_no: '',
       description: '',
       images: [],
     },
@@ -58,13 +62,20 @@ export default function PostingPage({ need = false }) {
       ...(v.category ? {} : { category: 'Choose a category.' }),
       ...(!need && !v.condition ? { condition: 'Choose the item’s condition.' } : {}),
     }),
-    need ? NEED_FIELDS : LISTING_FIELDS
+    need ? NEED_FIELDS : LISTING_FIELDS,
+    { context: 'post' }
   );
   const { values, bind, set, error } = form;
 
   const isPaid = ['SELL', 'RENT'].includes(values.listing_type);
   const isRent = values.listing_type === 'RENT';
   const needsDuration = need && values.need_type !== 'BUY';
+
+  // The pickup areas are real data from the server, or an honest "couldn't load"; never a made-up list.
+  const areaLoad = useLoad(() => (need ? Promise.resolve(null) : api.pickupAreas()), [need]);
+  const areas = areaLoad.data;
+  const [photoProblem, setPhotoProblem] = useState('');
+  const area = areas?.find((a) => String(a.id) === String(values.pickup_area_id));
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -79,10 +90,24 @@ export default function PostingPage({ need = false }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [form.busy]);
 
-  const addPhotos = (event) => {
+  const addPhotos = async (event) => {
     const picked = Array.from(event.target.files || []);
     event.target.value = ''; // lets the same file be picked again after removing it
-    if (picked.length) set('images', [...values.images, ...picked]);
+    if (!picked.length) return;
+
+    const accepted = [];
+    const tooSmall = [];
+    for (const file of picked) {
+      // Wrong type or size is explained by the form check; only a readable, narrow photo is turned away here.
+      const width = IMAGE_TYPES.includes(file.type) && file.size <= LIMITS.imageBytes ? await readImageWidth(file) : null;
+      if (width !== null && width < LIMITS.imageMinWidth) {
+        tooSmall.push(`"${file.name}" is only ${width} px wide. Use a photo at least ${LIMITS.imageMinWidth} px wide.`);
+      } else {
+        accepted.push(file);
+      }
+    }
+    setPhotoProblem(tooSmall.join(' '));
+    if (accepted.length) set('images', [...values.images, ...accepted]);
   };
 
   const submit = form.handleSubmit(async (v) => {
@@ -103,7 +128,7 @@ export default function PostingPage({ need = false }) {
         token,
         signal
       );
-      navigate('/my-needs', { state: { notice: 'Your request is posted. Other trainees can now see it.' } });
+      navigate('/my-needs', { state: { notice: 'Your need is posted. Other trainees can now see it.' } });
       return;
     }
 
@@ -114,12 +139,13 @@ export default function PostingPage({ need = false }) {
     data.append('price', String(isPaid ? Number(v.price) : 0));
     if (isRent) data.append('price_unit', v.price_unit);
     data.append('condition', v.condition);
-    data.append('location', v.location.trim());
+    data.append('pickup_area_id', v.pickup_area_id);
+    if (v.block_no.trim()) data.append('block_no', v.block_no.trim());
     data.append('description', v.description.trim());
     v.images.forEach((file) => data.append('images', file));
 
     const created = await api.createListing(data, token, signal);
-    navigate(`/listings/${created.id}`, { state: { notice: 'Your item is live. Other trainees can now find it.' } });
+    navigate(`/listings/${created.id}`, { state: { notice: 'Your listing is live. Other trainees can now find it.' } });
   });
 
   const types = need ? NEED_TYPES : LISTING_TYPES;
@@ -130,7 +156,7 @@ export default function PostingPage({ need = false }) {
       <Header />
       <main className="wide">
         <Banner
-          title={need ? 'Post a request' : 'Post an item'}
+          title={need ? 'Post a need' : 'Post a listing'}
           subtitle={
             need
               ? 'Tell the community what you are looking for. Someone might have it.'
@@ -209,9 +235,39 @@ export default function PostingPage({ need = false }) {
               </div>
             )}
 
-            <Field label={need ? 'Where can you pick it up?' : 'Pickup location'} required error={error('location')}>
-              <input {...bind('location')} maxLength={LIMITS.location[1]} placeholder="e.g. ECC 12, Food Court 2, Multiplex" />
-            </Field>
+            {need ? (
+              <Field label="Where can you pick it up?" required error={error('location')}>
+                <input {...bind('location')} maxLength={LIMITS.location[1]} placeholder="e.g. ECC 12, Food Court 2, Multiplex" />
+              </Field>
+            ) : (
+              <div className="two">
+                <Field label="Pickup area" required error={error('pickup_area_id')}>
+                  <select
+                    {...bind('pickup_area_id')}
+                    onChange={(event) => {
+                      set('pickup_area_id', event.target.value);
+                      set('block_no', '');
+                    }}
+                  >
+                    <option value="" disabled>Choose a pickup area</option>
+                    {areas?.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                  {areaLoad.status === 'failed' && !areas && <InlineError error={areaLoad.error} onRetry={areaLoad.reload} />}
+                </Field>
+                {area?.has_blocks && (
+                  <Field label="Block no., optional" error={error('block_no')}>
+                    <input
+                      {...bind('block_no')}
+                      onChange={(event) => set('block_no', event.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+                      inputMode="numeric"
+                      placeholder="1 to 100"
+                    />
+                  </Field>
+                )}
+              </div>
+            )}
 
             <Field label="Description" required error={error('description')} hint={`${values.description.trim().length} / ${LIMITS.description[1]}`}>
               <textarea
@@ -228,8 +284,8 @@ export default function PostingPage({ need = false }) {
             {!need && (
               <Field
                 label="Photos, optional"
-                error={error('images')}
-                hint={`Up to ${LIMITS.images} pictures (JPEG, PNG or WebP), 5 MB each.`}
+                error={error('images') || photoProblem}
+                hint={`Use a plain background and show the whole item. Up to ${LIMITS.images} pictures (JPEG, PNG or WebP), 5 MB each, at least ${LIMITS.imageMinWidth} px wide.`}
               >
                 <input type="file" name="images" multiple accept={IMAGE_TYPES.join(',')} onChange={addPhotos} />
               </Field>
@@ -242,7 +298,10 @@ export default function PostingPage({ need = false }) {
                     <button
                       type="button"
                       aria-label={`Remove ${file.name}`}
-                      onClick={() => set('images', values.images.filter((_, i) => i !== index))}
+                      onClick={() => {
+                        setPhotoProblem('');
+                        set('images', values.images.filter((_, i) => i !== index));
+                      }}
                     >
                       <X />
                     </button>
@@ -251,10 +310,10 @@ export default function PostingPage({ need = false }) {
               </ul>
             )}
 
-            <FormError>{form.formError}</FormError>
+            <FormError failure={form.failure} onRetry={form.resubmit}>{form.formError}</FormError>
 
             <button className="primary submit" disabled={form.busy} aria-busy={form.busy}>
-              {form.busy ? 'Posting…' : need ? 'Post request' : 'Post item'}
+              {form.busy ? 'Posting…' : need ? 'Post need' : 'Post listing'}
             </button>
           </form>
 
